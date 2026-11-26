@@ -8,6 +8,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Configuration du serveur derrière Render
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "20kb" }));
 
 // Configuration des sessions
@@ -16,7 +18,16 @@ const loginAttempts = new Map();
 const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const COOKIE_NAME = "dcia_session";
 
-// Générer une signature sécurisée pour les sessions
+// Vérifier la configuration de sécurité
+function securityConfigured() {
+  return Boolean(
+    process.env.SITE_PASSWORD &&
+    process.env.SESSION_SECRET &&
+    process.env.SESSION_SECRET.length >= 32
+  );
+}
+
+// Générer une signature sécurisée
 function signSession(id) {
   return crypto
     .createHmac("sha256", process.env.SESSION_SECRET)
@@ -24,8 +35,11 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Vérifier le cookie de session
+// Lire et vérifier le cookie de session
 function getSession(req) {
+  // Ne jamais utiliser la signature si la configuration est incomplète
+  if (!securityConfigured()) return null;
+
   const cookies = req.headers.cookie || "";
   const cookie = cookies
     .split(";")
@@ -136,21 +150,30 @@ form.addEventListener("submit", async event => {
 
 // Afficher l'écran de connexion
 app.get("/login", (req, res) => {
+  if (getSession(req)) return res.redirect("/");
   res.type("html").send(loginPage);
 });
 
-// Vérifier si une session est déjà active
+// Vérifier l'état de la configuration et de la session
 app.get("/auth/status", (req, res) => {
-  res.json({ authenticated: Boolean(getSession(req)) });
+  res.json({
+    authenticated: Boolean(getSession(req)),
+    securityConfigured: securityConfigured()
+  });
 });
 
-// Connexion avec le mot de passe défini dans Render
+// Connexion
 app.post("/auth/login", (req, res) => {
   const password = process.env.SITE_PASSWORD;
-  const secret = process.env.SESSION_SECRET;
   const submitted = req.body?.password;
 
-  if (!password || !secret || secret.length < 32) {
+  if (!securityConfigured()) {
+    console.error("Configuration de sécurité incomplète :", {
+      sitePasswordPresent: Boolean(process.env.SITE_PASSWORD),
+      sessionSecretPresent: Boolean(process.env.SESSION_SECRET),
+      sessionSecretLength: process.env.SESSION_SECRET?.length || 0
+    });
+
     return res.status(503).json({
       error: "Configuration de sécurité incomplète."
     });
@@ -160,7 +183,7 @@ app.post("/auth/login", (req, res) => {
     return res.status(400).json({ error: "Mot de passe invalide." });
   }
 
-  // Limiter les tentatives de connexion
+  // Limiter les tentatives par adresse IP
   const ip = req.ip || "unknown";
   const attempts = loginAttempts.get(ip) || {
     count: 0,
@@ -178,7 +201,7 @@ app.post("/auth/login", (req, res) => {
     });
   }
 
-  // Comparer les empreintes sans comparaison directe des mots de passe
+  // Comparer les empreintes des deux mots de passe
   const expected = crypto.createHash("sha256").update(password).digest();
   const received = crypto.createHash("sha256").update(submitted).digest();
 
@@ -224,11 +247,11 @@ app.post("/auth/logout", (req, res) => {
   res.json({ success: true });
 });
 
-// Protéger toutes les autres pages et routes
+// Protéger les autres pages et routes
 app.use((req, res, next) => {
   if (getSession(req)) return next();
 
-  if (req.accepts("html") && !req.path.startsWith("/auth/")) {
+  if (req.accepts("html")) {
     return res.redirect("/login");
   }
 
@@ -238,7 +261,7 @@ app.use((req, res, next) => {
   });
 });
 
-// Servir le véritable site après connexion
+// Servir le site après connexion
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -248,10 +271,20 @@ app.use(express.static(path.join(__dirname, "public")));
 // Instructions de Demon City IA
 const SYSTEM_PROMPT = `
 Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
-Tu parles français, naturellement et clairement.
+
+Tu parles français, naturellement, clairement et de manière conviviale.
+
 Tu aides à gérer le serveur Minecraft Bedrock et les projets Demon City.
-Tu ne prétends jamais avoir effectué une action qui n'a pas été exécutée.
-Ne te présente pas spontanément à chaque conversation.
+
+Ne te présente jamais spontanément.
+Ne commence pas chaque réponse par "Je suis Demon City IA".
+Présente-toi uniquement si l'utilisateur te demande explicitement qui tu es.
+
+Quand l'utilisateur parle de Demon City, réponds directement à sa demande.
+Évite les répétitions et les introductions inutiles.
+
+Tu ne prétends jamais avoir effectué une action qui n'a pas réellement été exécutée.
+Tu ne prétends pas avoir accès aux fichiers, à la console ou au serveur sans outil réellement disponible.
 `;
 
 // Statut général
@@ -438,5 +471,12 @@ app.post("/chat", async (req, res) => {
 
 // Démarrer Demon City IA
 app.listen(PORT, "0.0.0.0", () => {
+  // Afficher uniquement les informations de diagnostic, jamais les secrets
+  console.log("Diagnostic sécurité :", {
+    sitePasswordPresent: Boolean(process.env.SITE_PASSWORD),
+    sessionSecretPresent: Boolean(process.env.SESSION_SECRET),
+    sessionSecretLength: process.env.SESSION_SECRET?.length || 0
+  });
+
   console.log(`Demon City IA démarré sur le port ${PORT}`);
 });
