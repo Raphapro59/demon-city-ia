@@ -8,17 +8,18 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Configuration du serveur derrière Render
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "20kb" }));
 
-// Configuration des sessions
+// Sessions et protection de connexion
 const sessions = new Map();
 const loginAttempts = new Map();
+const pendingCommands = new Map();
+
 const SESSION_DURATION = 24 * 60 * 60 * 1000;
+const COMMAND_CONFIRMATION_DURATION = 2 * 60 * 1000;
 const COOKIE_NAME = "dcia_session";
 
-// Vérifier la configuration de sécurité
 function securityConfigured() {
   return Boolean(
     process.env.SITE_PASSWORD &&
@@ -27,7 +28,7 @@ function securityConfigured() {
   );
 }
 
-// Générer une signature sécurisée pour les sessions
+// Signer les identifiants de session
 function signSession(id) {
   return crypto
     .createHmac("sha256", process.env.SESSION_SECRET)
@@ -35,7 +36,7 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Récupérer et vérifier la session
+// Vérifier la session du visiteur
 function getSession(req) {
   if (!securityConfigured()) return null;
 
@@ -53,12 +54,12 @@ function getSession(req) {
   if (!id || !signature) return null;
 
   const expected = signSession(id);
-  const receivedBuffer = Buffer.from(signature);
+  const received = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
 
   if (
-    receivedBuffer.length !== expectedBuffer.length ||
-    !crypto.timingSafeEqual(receivedBuffer, expectedBuffer)
+    received.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(received, expectedBuffer)
   ) {
     return null;
   }
@@ -67,6 +68,7 @@ function getSession(req) {
 
   if (!session || session.expiresAt < Date.now()) {
     sessions.delete(id);
+    pendingCommands.delete(id);
     return null;
   }
 
@@ -134,9 +136,7 @@ form.addEventListener("submit", async event => {
 
     const data = await response.json();
 
-    if (!response.ok) {
-      throw new Error(data.error || "Connexion refusée.");
-    }
+    if (!response.ok) throw new Error(data.error || "Connexion refusée.");
 
     location.href = "/";
   } catch (err) {
@@ -149,13 +149,12 @@ form.addEventListener("submit", async event => {
 </body>
 </html>`;
 
-// Afficher la page de connexion
+// Routes de connexion
 app.get("/login", (req, res) => {
   if (getSession(req)) return res.redirect("/");
   res.type("html").send(loginPage);
 });
 
-// Vérifier l'état de la session
 app.get("/auth/status", (req, res) => {
   res.json({
     authenticated: Boolean(getSession(req)),
@@ -163,30 +162,21 @@ app.get("/auth/status", (req, res) => {
   });
 });
 
-// Connexion
 app.post("/auth/login", (req, res) => {
   const password = process.env.SITE_PASSWORD;
   const submitted = req.body?.password;
 
   if (!securityConfigured()) {
-    console.error("Configuration de sécurité incomplète :", {
-      sitePasswordPresent: Boolean(process.env.SITE_PASSWORD),
-      sessionSecretPresent: Boolean(process.env.SESSION_SECRET),
-      sessionSecretLength: process.env.SESSION_SECRET?.length || 0
-    });
-
+    console.error("Configuration de sécurité incomplète.");
     return res.status(503).json({
       error: "Configuration de sécurité incomplète."
     });
   }
 
   if (typeof submitted !== "string" || submitted.length > 200) {
-    return res.status(400).json({
-      error: "Mot de passe invalide."
-    });
+    return res.status(400).json({ error: "Mot de passe invalide." });
   }
 
-  // Limiter les tentatives de connexion
   const ip = req.ip || "unknown";
   const attempts = loginAttempts.get(ip) || {
     count: 0,
@@ -204,22 +194,17 @@ app.post("/auth/login", (req, res) => {
     });
   }
 
-  // Comparer les empreintes des mots de passe
   const expected = crypto.createHash("sha256").update(password).digest();
   const received = crypto.createHash("sha256").update(submitted).digest();
 
   if (!crypto.timingSafeEqual(expected, received)) {
     attempts.count++;
     loginAttempts.set(ip, attempts);
-
-    return res.status(401).json({
-      error: "Mot de passe incorrect."
-    });
+    return res.status(401).json({ error: "Mot de passe incorrect." });
   }
 
   loginAttempts.delete(ip);
 
-  // Créer une session aléatoire
   const id = crypto.randomBytes(32).toString("base64url");
 
   sessions.set(id, {
@@ -236,11 +221,13 @@ app.post("/auth/login", (req, res) => {
   res.json({ success: true });
 });
 
-// Déconnexion
 app.post("/auth/logout", (req, res) => {
   const current = getSession(req);
 
-  if (current) sessions.delete(current.id);
+  if (current) {
+    sessions.delete(current.id);
+    pendingCommands.delete(current.id);
+  }
 
   res.setHeader(
     "Set-Cookie",
@@ -250,13 +237,16 @@ app.post("/auth/logout", (req, res) => {
   res.json({ success: true });
 });
 
-// Protéger les autres pages et routes
+// Protéger les routes privées
 app.use((req, res, next) => {
-  if (getSession(req)) return next();
+  const current = getSession(req);
 
-  if (req.accepts("html")) {
-    return res.redirect("/login");
+  if (current) {
+    req.sessionId = current.id;
+    return next();
   }
+
+  if (req.accepts("html")) return res.redirect("/login");
 
   return res.status(401).json({
     success: false,
@@ -264,7 +254,7 @@ app.use((req, res, next) => {
   });
 });
 
-// Servir le site après connexion
+// Site privé
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -277,26 +267,248 @@ Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
 
 Tu parles français naturellement, clairement et de manière conviviale.
 
-Tu aides à gérer le serveur Minecraft Bedrock et les projets Demon City.
-
 Ne te présente jamais spontanément.
 Ne commence pas chaque réponse par "Je suis Demon City IA".
-Présente-toi uniquement si l'utilisateur te demande explicitement qui tu es.
+Réponds directement aux demandes.
 
-Réponds directement aux demandes et évite les répétitions.
+Tu peux utiliser ces fonctions :
+- get_server_status : consulter le statut réel du serveur Falix.
+- get_console_log : consulter les dernières lignes de la console.
+- prepare_server_command : préparer une commande Minecraft.
 
-Tu disposes d'une fonction appelée get_server_status.
-Elle permet de consulter le véritable statut du serveur Demon City RP sur Falix.
+Si l'utilisateur demande le statut, utilise get_server_status.
+S'il demande ce qui se passe dans la console, utilise get_console_log.
+Si l'utilisateur demande d'exécuter une commande Minecraft, utilise
+prepare_server_command.
 
-Quand l'utilisateur demande si le serveur est en ligne, son statut,
-son état ou ses ressources, utilise cette fonction.
+IMPORTANT :
+La fonction prepare_server_command ne lance PAS directement la commande.
+Elle prépare un code de confirmation temporaire.
+Présente ce code clairement à l'utilisateur et demande-lui de répondre :
+CONFIRMER suivi du code.
 
-Base tes réponses sur les données réellement retournées par Falix.
-Si la consultation échoue, explique que tu n'as pas pu vérifier le statut.
+Ne prétends jamais qu'une commande a été exécutée avant confirmation
+et avant le résultat positif de Falix.
 
-Ne prétends jamais avoir effectué une action qui n'a pas été exécutée.
-Ne prétends jamais avoir accès à des fonctions qui ne sont pas disponibles.
+L'utilisateur peut répondre ANNULER pour annuler une commande en attente.
+Ne révèle jamais les clés API, mots de passe ou secrets.
+Ne prétends jamais avoir accès à des fonctions non disponibles.
 `;
+
+// Configuration Falix
+function getFalixConfig() {
+  const apiKey = process.env.FALIX_API_KEY;
+  const serverId = process.env.FALIX_SERVER_ID;
+
+  if (!apiKey || !serverId) {
+    throw new Error("Configuration Falix incomplète.");
+  }
+
+  return { apiKey, serverId };
+}
+
+// Fonction commune pour appeler Falix
+async function falixRequest(endpoint, options = {}) {
+  const { apiKey } = getFalixConfig();
+
+  const response = await fetch(
+    `https://client.falixnodes.net/api/v2${endpoint}`,
+    {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers
+      },
+      signal: AbortSignal.timeout(15000)
+    }
+  );
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message =
+      result.error?.message ||
+      result.message ||
+      `Erreur Falix (${response.status})`;
+
+    throw new Error(message);
+  }
+
+  return result.data;
+}
+
+// Lire le statut réel du serveur
+async function getFalixStatus() {
+  const { serverId } = getFalixConfig();
+
+  const server = await falixRequest(
+    `/servers/${encodeURIComponent(serverId)}/console/status`
+  );
+
+  return {
+    id: server.server_id,
+    name: server.server_name,
+    status: server.status,
+    message: server.message,
+    nodeReady: server.node_ready,
+    resources: server.resources || null
+  };
+}
+
+// Lire les dernières lignes de la console
+async function getFalixLogs() {
+  const { serverId } = getFalixConfig();
+
+  const data = await falixRequest(
+    `/servers/${encodeURIComponent(serverId)}/console/log?lines=40`
+  );
+
+  return {
+    source: data.source || null,
+    truncated: Boolean(data.truncated),
+    lines: Array.isArray(data.lines) ? data.lines : []
+  };
+}
+
+// Envoyer une commande à Falix
+async function sendFalixCommand(command) {
+  const { serverId } = getFalixConfig();
+
+  const data = await falixRequest(
+    `/servers/${encodeURIComponent(serverId)}/commands`,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID()
+      },
+      body: JSON.stringify({ command })
+    }
+  );
+
+  return {
+    accepted: data.accepted === true,
+    serverId: data.server_id
+  };
+}
+
+// Préparer une commande sans l'exécuter
+function prepareCommand(sessionId, command) {
+  if (typeof command !== "string") {
+    throw new Error("Commande invalide.");
+  }
+
+  const cleaned = command.trim().replace(/^\/+/, "");
+
+  if (!cleaned || cleaned.length > 300) {
+    throw new Error("La commande doit contenir entre 1 et 300 caractères.");
+  }
+
+  // Une seule ligne est autorisée
+  if (/[\r\n\u0000-\u001f]/.test(cleaned)) {
+    throw new Error("Les commandes sur plusieurs lignes sont interdites.");
+  }
+
+  // Bloquer quelques commandes à fort impact dans cette première version
+  const forbidden = [
+    "stop",
+    "restart",
+    "kill",
+    "op",
+    "deop"
+  ];
+
+  const firstWord = cleaned.split(/\s+/)[0].toLowerCase();
+
+  if (forbidden.includes(firstWord)) {
+    throw new Error(
+      "Cette commande est bloquée dans cette première version."
+    );
+  }
+
+  const code = crypto.randomBytes(3).toString("hex").toUpperCase();
+
+  pendingCommands.set(sessionId, {
+    command: cleaned,
+    code,
+    expiresAt: Date.now() + COMMAND_CONFIRMATION_DURATION
+  });
+
+  return {
+    success: true,
+    confirmationRequired: true,
+    code,
+    expiresInSeconds: 120
+  };
+}
+
+// Confirmer ou annuler une commande en attente
+async function handleConfirmation(sessionId, message) {
+  const pending = pendingCommands.get(sessionId);
+
+  if (!pending) {
+    return {
+      handled: false
+    };
+  }
+
+  if (message.trim().toUpperCase() === "ANNULER") {
+    pendingCommands.delete(sessionId);
+
+    return {
+      handled: true,
+      reply: "Commande annulée. Rien n'a été envoyé à Falix."
+    };
+  }
+
+  const match = message.trim().match(/^CONFIRMER\s+([A-F0-9]{6})$/i);
+
+  if (!match) {
+    return { handled: false };
+  }
+
+  if (Date.now() > pending.expiresAt) {
+    pendingCommands.delete(sessionId);
+
+    return {
+      handled: true,
+      reply: "Le code a expiré. Prépare à nouveau ta commande."
+    };
+  }
+
+  if (match[1].toUpperCase() !== pending.code) {
+    return {
+      handled: true,
+      reply: "Code incorrect. La commande n'a pas été envoyée."
+    };
+  }
+
+  // Supprimer avant l'appel pour empêcher une double exécution
+  pendingCommands.delete(sessionId);
+
+  try {
+    const result = await sendFalixCommand(pending.command);
+
+    if (!result.accepted) {
+      return {
+        handled: true,
+        reply: "Falix n'a pas confirmé l'acceptation de la commande."
+      };
+    }
+
+    return {
+      handled: true,
+      reply: `Falix a accepté la commande : ${pending.command}`
+    };
+  } catch (error) {
+    console.error("Erreur commande Falix :", error.message);
+
+    return {
+      handled: true,
+      reply: `Impossible d'envoyer la commande à Falix : ${error.message}`
+    };
+  }
+}
 
 // Statut général de Demon City IA
 app.get("/status", (req, res) => {
@@ -311,92 +523,27 @@ app.get("/status", (req, res) => {
   });
 });
 
-// Vérifier la connexion au compte Falix
+// Vérifier la connexion Falix
 app.get("/falix-test", async (req, res) => {
-  const apiKey = process.env.FALIX_API_KEY;
-
-  if (!apiKey) {
-    return res.status(500).json({
-      success: false,
-      error: "Clé API Falix manquante"
-    });
-  }
-
   try {
-    const response = await fetch(
-      "https://client.falixnodes.net/api/v2/me",
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`
-        },
-        signal: AbortSignal.timeout(15000)
-      }
-    );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        success: false,
-        error: result.error?.message || "Erreur Falix"
-      });
-    }
+    const data = await falixRequest("/me");
 
     res.json({
       success: true,
       message: "Demon City IA est connecté à Falix !",
-      account: result.data?.account?.username || "Connecté"
+      account: data.account?.username || "Connecté"
     });
   } catch (error) {
     console.error("Erreur Falix :", error.message);
 
     res.status(500).json({
       success: false,
-      error: "Impossible de contacter Falix"
+      error: "Impossible de contacter Falix."
     });
   }
 });
 
-// Fonction interne : récupérer le statut réel du serveur Falix
-async function getFalixStatus() {
-  const apiKey = process.env.FALIX_API_KEY;
-  const serverId = process.env.FALIX_SERVER_ID;
-
-  if (!apiKey || !serverId) {
-    throw new Error("Configuration Falix incomplète.");
-  }
-
-  const response = await fetch(
-    `https://client.falixnodes.net/api/v2/servers/${encodeURIComponent(serverId)}/console/status`,
-    {
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      },
-      signal: AbortSignal.timeout(15000)
-    }
-  );
-
-  const result = await response.json();
-
-  if (!response.ok || !result.data) {
-    throw new Error(
-      result.error?.message || "Impossible de lire le statut Falix."
-    );
-  }
-
-  const server = result.data;
-
-  return {
-    id: server.server_id,
-    name: server.server_name,
-    status: server.status,
-    message: server.message,
-    nodeReady: server.node_ready,
-    resources: server.resources || null
-  };
-}
-
-// Route pour consulter le statut depuis le navigateur
+// Route de statut Falix
 app.get("/falix-status", async (req, res) => {
   try {
     const server = await getFalixStatus();
@@ -415,7 +562,75 @@ app.get("/falix-status", async (req, res) => {
   }
 });
 
-// Envoyer un message à Groq avec accès contrôlé à Falix
+// Route de lecture de la console
+app.get("/falix-console", async (req, res) => {
+  try {
+    const logs = await getFalixLogs();
+
+    res.json({
+      success: true,
+      console: logs
+    });
+  } catch (error) {
+    console.error("Erreur lecture console :", error.message);
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Fonctions accessibles à l'IA
+const availableTools = [
+  {
+    type: "function",
+    function: {
+      name: "get_server_status",
+      description: "Consulter le statut réel du serveur Falix.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_console_log",
+      description: "Lire les dernières lignes de la console Minecraft.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "prepare_server_command",
+      description:
+        "Préparer une commande Minecraft. Ne l'exécute pas : un code de confirmation sera demandé à l'utilisateur.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "Commande Minecraft sans slash initial."
+          }
+        },
+        required: ["command"],
+        additionalProperties: false
+      }
+    }
+  }
+];
+
+// Chat principal avec Groq et Falix
 app.post("/chat", async (req, res) => {
   const apiKey = process.env.GROQ_API_KEY;
   const message = req.body?.message;
@@ -423,43 +638,38 @@ app.post("/chat", async (req, res) => {
   if (!apiKey) {
     return res.status(500).json({
       success: false,
-      error: "Clé API Groq manquante"
+      error: "Clé API Groq manquante."
     });
   }
 
   if (typeof message !== "string" || !message.trim()) {
     return res.status(400).json({
       success: false,
-      error: "Message vide ou invalide"
+      error: "Message vide ou invalide."
     });
   }
 
   if (message.length > 8000) {
     return res.status(400).json({
       success: false,
-      error: "Message trop long"
+      error: "Message trop long."
     });
   }
 
-  // Seule cette fonction Falix est autorisée pour le moment
-  const availableTools = [
-    {
-      type: "function",
-      function: {
-        name: "get_server_status",
-        description:
-          "Consulter le véritable statut du serveur Minecraft Demon City RP sur Falix. Utiliser quand l'utilisateur demande si le serveur est en ligne, son état ou ses ressources.",
-        parameters: {
-          type: "object",
-          properties: {},
-          required: [],
-          additionalProperties: false
-        }
-      }
-    }
-  ];
-
   try {
+    // Vérifier d'abord si l'utilisateur confirme une commande
+    const confirmation = await handleConfirmation(
+      req.sessionId,
+      message
+    );
+
+    if (confirmation.handled) {
+      return res.json({
+        success: true,
+        reply: confirmation.reply
+      });
+    }
+
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: message.trim() }
@@ -493,7 +703,7 @@ app.post("/chat", async (req, res) => {
 
       return res.status(502).json({
         success: false,
-        error: result.error?.message || "Erreur du moteur Groq"
+        error: result.error?.message || "Erreur du moteur Groq."
       });
     }
 
@@ -502,35 +712,48 @@ app.post("/chat", async (req, res) => {
     if (!assistantMessage) {
       return res.status(502).json({
         success: false,
-        error: "Groq n'a pas renvoyé de réponse"
+        error: "Groq n'a pas renvoyé de réponse."
       });
     }
 
-    // Exécuter uniquement les fonctions autorisées
+    // Exécuter uniquement les fonctions prévues
     if (assistantMessage.tool_calls?.length) {
       messages.push(assistantMessage);
 
       for (const toolCall of assistantMessage.tool_calls) {
         let toolResult;
 
-        if (toolCall.function?.name === "get_server_status") {
-          try {
-            const status = await getFalixStatus();
+        try {
+          const functionName = toolCall.function?.name;
+          const args = JSON.parse(toolCall.function?.arguments || "{}");
 
+          if (functionName === "get_server_status") {
             toolResult = JSON.stringify({
               success: true,
-              server: status
+              server: await getFalixStatus()
             });
-          } catch (error) {
+          } else if (functionName === "get_console_log") {
+            toolResult = JSON.stringify({
+              success: true,
+              console: await getFalixLogs()
+            });
+          } else if (functionName === "prepare_server_command") {
+            const prepared = prepareCommand(
+              req.sessionId,
+              args.command
+            );
+
+            toolResult = JSON.stringify(prepared);
+          } else {
             toolResult = JSON.stringify({
               success: false,
-              error: error.message
+              error: "Fonction non autorisée."
             });
           }
-        } else {
+        } catch (error) {
           toolResult = JSON.stringify({
             success: false,
-            error: "Fonction non autorisée."
+            error: error.message
           });
         }
 
@@ -541,7 +764,7 @@ app.post("/chat", async (req, res) => {
         });
       }
 
-      // Demander à Groq de formuler une réponse avec les données Falix
+      // Faire formuler la réponse finale par Groq
       const finalResponse = await fetch(
         "https://api.groq.com/openai/v1/chat/completions",
         {
@@ -587,13 +810,12 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    // Réponse normale sans appel à Falix
     const answer = assistantMessage.content;
 
     if (!answer) {
       return res.status(502).json({
         success: false,
-        error: "Groq n'a pas renvoyé de réponse"
+        error: "Groq n'a pas renvoyé de réponse."
       });
     }
 
@@ -607,7 +829,7 @@ app.post("/chat", async (req, res) => {
 
     res.status(500).json({
       success: false,
-      error: "Impossible de contacter le moteur IA"
+      error: "Impossible de contacter le moteur IA."
     });
   }
 });
