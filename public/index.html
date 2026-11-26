@@ -12,580 +12,127 @@
 <style>
 :root {
   color-scheme: dark;
-  --bg: #171316;
-  --sidebar: #100d10;
-  --panel: #211a20;
-  --panel-2: #2a2028;
-  --border: #392a35;
-  --text: #f5eef3;
-  --muted: #aa9ca7;
-  --accent: #a92750;
-  --accent-hover: #c33562;
-  --user: #35232d;
+  --bg:#171316;
+  --sidebar:#100d10;
+  --panel:#211a20;
+  --panel2:#2a2028;
+  --border:#392a35;
+  --text:#f5eef3;
+  --muted:#aa9ca7;
+  --accent:#a92750;
+  --user:#35232d;
 }
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  min-height: 100dvh;
-  display: flex;
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.5 system-ui, sans-serif;
-}
-
-button, textarea { font: inherit; }
-button { cursor: pointer; }
-
-.sidebar {
-  width: 260px;
-  flex: 0 0 260px;
-  background: var(--sidebar);
-  border-right: 1px solid var(--border);
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 7px 5px 12px;
-}
-
-.mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(145deg, #c13a65, #65152f);
-  font-weight: 850;
-}
-
-.brand strong { display: block; font-size: 15px; }
-.brand small { color: var(--muted); font-size: 11px; }
-
-.new-chat {
-  width: 100%;
-  padding: 11px 13px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  color: var(--text);
-  text-align: left;
-}
-
-.new-chat:hover, .nav button:hover { background: var(--panel-2); }
-
-.section-label {
-  color: #8f808b;
-  text-transform: uppercase;
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 1.2px;
-  padding: 0 9px;
-}
-
-.nav { display: grid; gap: 5px; }
-
-.nav button {
-  width: 100%;
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 11px;
-  background: transparent;
-  color: #d8cbd4;
-  text-align: left;
-}
-
-.nav button.active { background: #38202c; color: white; }
-
-.sidebar-bottom {
-  margin-top: auto;
-  border-top: 1px solid var(--border);
-  padding-top: 13px;
-}
-
-.profile { display: flex; align-items: center; gap: 10px; padding: 8px 5px; }
-
-.avatar {
-  width: 31px;
-  height: 31px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: #512337;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.profile small { color: var(--muted); display: block; font-size: 11px; }
-
-.main {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 100dvh;
-}
-
-.topbar {
-  height: 62px;
-  flex: 0 0 62px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 22px;
-  border-bottom: 1px solid #30252e;
-}
-
-.top-left { display: flex; align-items: center; gap: 12px; }
-.topbar strong { font-size: 14px; }
-.model { color: var(--muted); font-size: 12px; }
-
-.status {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: #c9b9c4;
-  font-size: 11px;
-}
-
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #53c78a;
-  box-shadow: 0 0 9px #53c78a66;
-}
-
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  border: 0;
-  border-radius: 10px;
-  color: #d9cbd4;
-  background: transparent;
-  font-size: 19px;
-}
-
-.mobile-only { display: none; }
-
-.conversation {
-  flex: 1;
-  width: 100%;
-  max-width: 850px;
-  margin: 0 auto;
-  padding: 34px 24px 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-
-.welcome {
-  margin: auto;
-  text-align: center;
-  max-width: 610px;
-  padding: 40px 0;
-}
-
-.welcome-mark {
-  width: 58px;
-  height: 58px;
-  border-radius: 19px;
-  margin: 0 auto 20px;
-  display: grid;
-  place-items: center;
-  font-weight: 900;
-  font-size: 22px;
-  background: linear-gradient(145deg, #b32d58, #55162e);
-}
-
-.welcome h1 {
-  font-size: clamp(25px, 4vw, 34px);
-  line-height: 1.2;
-  margin: 0 0 10px;
-}
-
-.welcome p { color: var(--muted); margin: 0 auto; }
-
-.suggestions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 30px;
-  text-align: left;
-}
-
-.suggestion {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: #e8dce4;
-  border-radius: 14px;
-  padding: 14px;
-  min-height: 72px;
-  text-align: left;
-}
-
-.suggestion:hover { border-color: #794052; background: var(--panel-2); }
-.suggestion b { display: block; font-size: 13px; margin-bottom: 3px; }
-.suggestion span { color: var(--muted); font-size: 11px; }
-
-.message {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  max-width: 100%;
-}
-
-.message.user { justify-content: flex-end; }
-
-.bubble {
-  max-width: min(680px, 88%);
-  padding: 13px 16px;
-  border-radius: 17px;
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-
-.message.user .bubble {
-  background: var(--user);
-  border: 1px solid #513140;
-}
-
-.message.assistant .bubble {
-  background: transparent;
-  padding-left: 0;
-}
-
-.bubble.markdown { white-space: normal; line-height: 1.7; min-width: 0; }
-.bubble.markdown p { margin: 0 0 13px; }
-.bubble.markdown p:last-child { margin-bottom: 0; }
-
-.bubble.markdown h1,
-.bubble.markdown h2,
-.bubble.markdown h3,
-.bubble.markdown h4 {
-  line-height: 1.3;
-  margin: 20px 0 10px;
-}
-
-.bubble.markdown h1 { font-size: 25px; }
-.bubble.markdown h2 { font-size: 21px; }
-.bubble.markdown h3 { font-size: 18px; }
-.bubble.markdown h4 { font-size: 16px; }
-
-.bubble.markdown ul,
-.bubble.markdown ol {
-  padding-left: 25px;
-  margin: 9px 0 15px;
-}
-
-.bubble.markdown li { margin: 4px 0; }
-
-.bubble.markdown blockquote {
-  border-left: 3px solid var(--accent);
-  margin: 14px 0;
-  padding: 3px 14px;
-  color: #c9bac5;
-}
-
-.bubble.markdown a {
-  color: #e47b9d;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.bubble.markdown strong { color: #fff; }
-
-.bubble.markdown hr {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 22px 0;
-}
-
-.bubble.markdown :not(pre) > code {
-  background: #30232d;
-  border: 1px solid #493342;
-  color: #f2a5c0;
-  border-radius: 6px;
-  padding: 2px 6px;
-  font-family: ui-monospace, monospace;
-  font-size: .88em;
-}
-
-.table-wrap {
-  max-width: 100%;
-  overflow-x: auto;
-  margin: 14px 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.bubble.markdown table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  min-width: 300px;
-}
-
-.bubble.markdown th,
-.bubble.markdown td {
-  padding: 9px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-.bubble.markdown th { background: #30232d; color: #fff; }
-.bubble.markdown tr:last-child td { border-bottom: 0; }
-
-.code-block {
-  margin: 16px 0;
-  max-width: 100%;
-  overflow: hidden;
-  border: 1px solid #453441;
-  border-radius: 12px;
-  background: #111014;
-}
-
-.code-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
-  background: #211a20;
-  border-bottom: 1px solid #453441;
-  color: #bcaeba;
-  font-size: 11px;
-}
-
-.code-language { font-weight: 700; text-transform: lowercase; }
-
-.copy-code {
-  border: 1px solid #51404b;
-  border-radius: 7px;
-  padding: 5px 9px;
-  background: #30232d;
-  color: #eee2eb;
-  font-size: 11px;
-}
-
-.copy-code:hover { background: #49303e; }
-
-.code-block pre {
-  margin: 0;
-  padding: 15px;
-  overflow-x: auto;
-  max-width: 100%;
-  background: #111014;
-}
-
-.code-block pre code {
-  display: block;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  color: #e9e1e9;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.65;
-  white-space: pre;
-}
-
-.mini-mark {
-  flex: 0 0 29px;
-  width: 29px;
-  height: 29px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  font-size: 10px;
-  font-weight: 900;
-  background: #76213e;
-  margin-top: 5px;
-}
-
-/* Carte de confirmation des commandes */
-.action-card {
-  margin-top: 16px;
-  width: min(100%, 430px);
-  padding: 15px;
-  border: 1px solid #694052;
-  border-radius: 15px;
-  background: #211820;
-}
-
-.action-heading {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-weight: 750;
-  font-size: 13px;
-  margin-bottom: 11px;
-}
-
-.action-icon {
-  width: 29px;
-  height: 29px;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  background: #492337;
-  color: #ff9cba;
-}
-
-.action-description {
-  color: var(--muted);
-  font-size: 12px;
-  margin-bottom: 8px;
-}
-
-.action-command {
-  display: block;
-  padding: 11px;
-  border: 1px solid #493342;
-  border-radius: 9px;
-  background: #120f13;
-  color: #f3b4ca;
-  font: 13px/1.5 ui-monospace, monospace;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.action-expiry {
-  margin-top: 9px;
-  color: #9c8b98;
-  font-size: 11px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 9px;
-  margin-top: 14px;
-}
-
-.action-buttons button {
-  flex: 1;
-  min-height: 40px;
-  border: 0;
-  border-radius: 9px;
-  font-weight: 750;
-  font-size: 13px;
-}
-
-.action-confirm { background: #a92750; color: white; }
-.action-confirm:hover { background: #c33562; }
-
-.action-cancel {
-  background: #382d36;
-  color: #e6d9e2;
-  border: 1px solid #594451 !important;
-}
-
-.action-cancel:hover { background: #4a3744; }
-.action-buttons button:disabled { opacity: .5; cursor: not-allowed; }
-
-.action-card.finished { opacity: .7; border-color: #51404b; }
-
-.composer-wrap {
-  width: 100%;
-  max-width: 850px;
-  margin: 0 auto;
-  padding: 0 24px 16px;
-}
-
-.composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 10px 11px 10px 16px;
-  border: 1px solid #51404b;
-  border-radius: 22px;
-  background: var(--panel);
-}
-
-.composer:focus-within { border-color: #96506a; }
-
-.composer textarea {
-  flex: 1;
-  min-width: 0;
-  resize: none;
-  max-height: 150px;
-  min-height: 28px;
-  border: 0;
-  outline: 0;
-  color: var(--text);
-  background: transparent;
-  padding: 5px 0;
-  line-height: 1.5;
-}
-
-.composer textarea::placeholder { color: #948591; }
-
-.send {
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
-  border: 0;
-  border-radius: 13px;
-  color: white;
-  background: var(--accent);
-  font-size: 19px;
-  font-weight: 800;
-}
-
-.send:hover { background: var(--accent-hover); }
-.send:disabled { opacity: .45; cursor: not-allowed; }
-
-.disclaimer {
-  text-align: center;
-  color: #857782;
-  font-size: 10px;
-  padding: 9px 0 0;
-}
-
-.mobile-overlay { display: none; }
-
-@media (max-width: 760px) {
-  .sidebar {
-    position: fixed;
-    z-index: 5;
-    inset: 0 auto 0 0;
-    transform: translateX(-105%);
-    transition: transform .2s ease;
-  }
-
-  body.menu-open .sidebar { transform: translateX(0); }
-
-  body.menu-open .mobile-overlay {
-    display: block;
-    position: fixed;
-    z-index: 4;
-    inset: 0;
-    background: #0009;
-  }
-
-  .mobile-only { display: inline-grid; place-items: center; }
-  .topbar { padding: 0 13px; }
-  .conversation { padding: 24px 16px 16px; }
-  .composer-wrap { padding: 0 12px 12px; }
-  .welcome { padding: 22px 0; }
-
-  .suggestions {
-    grid-template-columns: 1fr;
-    gap: 8px;
-    margin-top: 24px;
-  }
-
-  .suggestion { min-height: 62px; }
-  .status { font-size: 10px; }
-  .bubble { max-width: 94%; }
-  .code-block pre { padding: 11px; }
+*{box-sizing:border-box}
+body{margin:0;min-height:100dvh;display:flex;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}
+button,textarea{font:inherit}
+button{cursor:pointer}
+.sidebar{width:260px;flex:0 0 260px;background:var(--sidebar);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:18px}
+.brand{display:flex;align-items:center;gap:11px;padding:7px 5px 12px}
+.mark,.welcome-mark{display:grid;place-items:center;background:linear-gradient(145deg,#c13a65,#65152f);font-weight:900}
+.mark{width:38px;height:38px;border-radius:12px}
+.brand strong{display:block;font-size:15px}
+.brand small,.profile small{color:var(--muted);font-size:11px}
+.new-chat{width:100%;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--panel);color:var(--text);text-align:left}
+.new-chat:hover,.nav button:hover{background:var(--panel2)}
+.section-label{color:#8f808b;text-transform:uppercase;font-size:10px;font-weight:750;letter-spacing:1.2px;padding:0 9px}
+.nav{display:grid;gap:5px}
+.nav button{width:100%;border:0;border-radius:10px;padding:10px 11px;background:transparent;color:#d8cbd4;text-align:left}
+.nav button.active{background:#38202c;color:white}
+.sidebar-bottom{margin-top:auto;border-top:1px solid var(--border);padding-top:13px}
+.profile{display:flex;align-items:center;gap:10px;padding:8px 5px}
+.avatar{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;background:#512337;font-size:12px;font-weight:800}
+.profile small{display:block}
+.main{min-width:0;flex:1;display:flex;flex-direction:column;min-height:100dvh}
+.topbar{height:62px;flex:0 0 62px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;border-bottom:1px solid #30252e}
+.top-left{display:flex;align-items:center;gap:12px}
+.topbar strong{font-size:14px}
+.model{color:var(--muted);font-size:12px}
+.status{display:flex;align-items:center;gap:7px;color:#c9b9c4;font-size:11px}
+.dot{width:7px;height:7px;border-radius:50%;background:#53c78a;box-shadow:0 0 9px #53c78a66}
+.dot.offline{background:#d45b70;box-shadow:0 0 9px #d45b7066}
+.icon-btn{width:36px;height:36px;border:0;border-radius:10px;color:#d9cbd4;background:transparent;font-size:19px}
+.mobile-only{display:none}
+.conversation{flex:1;width:100%;max-width:850px;margin:0 auto;padding:34px 24px 22px;display:flex;flex-direction:column;gap:22px}
+.welcome{margin:auto;text-align:center;max-width:610px;padding:40px 0}
+.welcome-mark{width:58px;height:58px;border-radius:19px;margin:0 auto 20px;font-size:22px}
+.welcome h1{font-size:clamp(25px,4vw,34px);line-height:1.2;margin:0 0 10px}
+.welcome p{color:var(--muted);margin:0 auto}
+.suggestions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:30px;text-align:left}
+.suggestion{border:1px solid var(--border);background:var(--panel);color:#e8dce4;border-radius:14px;padding:14px;min-height:72px;text-align:left}
+.suggestion:hover{border-color:#794052;background:var(--panel2)}
+.suggestion b{display:block;font-size:13px;margin-bottom:3px}
+.suggestion span{color:var(--muted);font-size:11px}
+.message{display:flex;gap:12px;align-items:flex-start;max-width:100%}
+.message.user{justify-content:flex-end}
+.bubble{max-width:min(680px,88%);padding:13px 16px;border-radius:17px;overflow-wrap:anywhere;min-width:0}
+.message.user .bubble{background:var(--user);border:1px solid #513140}
+.message.assistant .bubble{background:transparent;padding-left:0}
+.bubble.markdown{white-space:normal;line-height:1.7;min-width:0}
+.bubble.markdown p{margin:0 0 13px}
+.bubble.markdown p:last-child{margin-bottom:0}
+.bubble.markdown h1,.bubble.markdown h2,.bubble.markdown h3{line-height:1.3;margin:20px 0 10px}
+.bubble.markdown h1{font-size:25px}
+.bubble.markdown h2{font-size:21px}
+.bubble.markdown h3{font-size:18px}
+.bubble.markdown ul,.bubble.markdown ol{padding-left:25px;margin:9px 0 15px}
+.bubble.markdown li{margin:4px 0}
+.bubble.markdown blockquote{border-left:3px solid var(--accent);margin:14px 0;padding:3px 14px;color:#c9bac5}
+.bubble.markdown a{color:#e47b9d;text-decoration:underline;text-underline-offset:3px}
+.bubble.markdown strong{color:#fff}
+.bubble.markdown hr{border:0;border-top:1px solid var(--border);margin:22px 0}
+.bubble.markdown :not(pre)>code{background:#30232d;border:1px solid #493342;color:#f2a5c0;border-radius:6px;padding:2px 6px;font-family:ui-monospace,monospace;font-size:.88em}
+.table-wrap{max-width:100%;overflow-x:auto;margin:14px 0;border:1px solid var(--border);border-radius:10px}
+.bubble.markdown table{width:100%;border-collapse:collapse;font-size:13px;min-width:300px}
+.bubble.markdown th,.bubble.markdown td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border)}
+.bubble.markdown th{background:#30232d;color:#fff}
+.bubble.markdown tr:last-child td{border-bottom:0}
+.code-block{margin:16px 0;max-width:100%;overflow:hidden;border:1px solid #453441;border-radius:12px;background:#111014}
+.code-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:#211a20;border-bottom:1px solid #453441;color:#bcaeba;font-size:11px}
+.code-language{font-weight:700;text-transform:lowercase}
+.copy-code{border:1px solid #51404b;border-radius:7px;padding:5px 9px;background:#30232d;color:#eee2eb;font-size:11px}
+.code-block pre{margin:0;padding:15px;overflow-x:auto;max-width:100%;background:#111014}
+.code-block pre code{display:block;padding:0;background:transparent;border:0;color:#e9e1e9;font-family:ui-monospace,monospace;font-size:13px;line-height:1.65;white-space:pre}
+.mini-mark{flex:0 0 29px;width:29px;height:29px;border-radius:10px;display:grid;place-items:center;font-size:10px;font-weight:900;background:#76213e;margin-top:5px}
+
+/* Cartes de confirmation */
+.action-card{margin-top:16px;width:min(100%,430px);padding:15px;border:1px solid #694052;border-radius:15px;background:#211820}
+.action-heading{display:flex;align-items:center;gap:9px;font-weight:750;font-size:13px;margin-bottom:11px}
+.action-icon{width:29px;height:29px;display:grid;place-items:center;border-radius:9px;background:#492337;color:#ff9cba}
+.action-description{color:var(--muted);font-size:12px;margin-bottom:8px}
+.action-command{display:block;padding:11px;border:1px solid #493342;border-radius:9px;background:#120f13;color:#f3b4ca;font:13px/1.5 ui-monospace,monospace;overflow-wrap:anywhere;white-space:pre-wrap}
+.action-expiry{margin-top:9px;color:#9c8b98;font-size:11px}
+.action-buttons{display:flex;gap:9px;margin-top:14px}
+.action-buttons button{flex:1;min-height:40px;border:0;border-radius:9px;font-weight:750;font-size:13px}
+.action-confirm{background:#a92750;color:white}
+.action-confirm:hover{background:#c33562}
+.action-cancel{background:#382d36;color:#e6d9e2;border:1px solid #594451!important}
+.action-cancel:hover{background:#4a3744}
+.action-buttons button:disabled{opacity:.5;cursor:not-allowed}
+.action-card.finished{opacity:.7;border-color:#51404b}
+.composer-wrap{width:100%;max-width:850px;margin:0 auto;padding:0 24px 16px}
+.composer{display:flex;align-items:flex-end;gap:10px;padding:10px 11px 10px 16px;border:1px solid #51404b;border-radius:22px;background:var(--panel)}
+.composer:focus-within{border-color:#96506a}
+.composer textarea{flex:1;min-width:0;resize:none;max-height:150px;min-height:28px;border:0;outline:0;color:var(--text);background:transparent;padding:5px 0;line-height:1.5}
+.composer textarea::placeholder{color:#948591}
+.send{flex:0 0 38px;width:38px;height:38px;border:0;border-radius:13px;color:white;background:var(--accent);font-size:19px;font-weight:800}
+.send:hover{background:#c33562}
+.send:disabled{opacity:.45;cursor:not-allowed}
+.disclaimer{text-align:center;color:#857782;font-size:10px;padding:9px 0 0}
+.mobile-overlay{display:none}
+@media(max-width:760px){
+  .sidebar{position:fixed;z-index:5;inset:0 auto 0 0;transform:translateX(-105%);transition:transform .2s ease}
+  body.menu-open .sidebar{transform:translateX(0)}
+  body.menu-open .mobile-overlay{display:block;position:fixed;z-index:4;inset:0;background:#0009}
+  .mobile-only{display:inline-grid;place-items:center}
+  .topbar{padding:0 13px}
+  .conversation{padding:24px 16px 16px}
+  .composer-wrap{padding:0 12px 12px}
+  .welcome{padding:22px 0}
+  .suggestions{grid-template-columns:1fr;gap:8px;margin-top:24px}
+  .suggestion{min-height:62px}
+  .status{font-size:10px}
+  .bubble{max-width:94%}
+  .code-block pre{padding:11px}
 }
 </style>
 </head>
@@ -611,6 +158,7 @@ button { cursor: pointer; }
     <button data-section="Serveur">▣ Serveur</button>
     <button data-section="Console">⌘ Console</button>
     <button data-section="Fichiers">▤ Fichiers</button>
+    <button data-section="Web">◎ Recherche Web</button>
   </nav>
 
   <div class="sidebar-bottom">
@@ -635,8 +183,8 @@ button { cursor: pointer; }
     </div>
 
     <div class="status">
-      <span class="dot"></span>
-      <span>IA en ligne · Falix connecté</span>
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Vérification de la connexion…</span>
     </div>
   </header>
 
@@ -644,30 +192,32 @@ button { cursor: pointer; }
     <div class="welcome" id="welcome">
       <div class="welcome-mark">DC</div>
       <h1>Que faisons-nous sur Demon City ?</h1>
-      <p>
-        Ton espace de discussion pour développer, configurer et améliorer
-        ton serveur Minecraft Bedrock.
-      </p>
+      <p>Ton espace de discussion pour développer, configurer et améliorer ton serveur Minecraft Bedrock.</p>
 
       <div class="suggestions">
         <button class="suggestion" data-prompt="Aide-moi à améliorer Demon City.">
           <b>Améliorer Demon City</b>
           <span>Idées et développement du serveur</span>
         </button>
-
-        <button class="suggestion" data-prompt="Aide-moi à configurer mon serveur Falix.">
-          <b>Configuration du serveur</b>
-          <span>Paramètres et organisation</span>
+        <button class="suggestion" data-prompt="Consulte le statut réel de mon serveur Falix.">
+          <b>État du serveur</b>
+          <span>Consulter le statut Falix</span>
         </button>
-
+        <button class="suggestion" data-prompt="Affiche les dernières lignes de la console de mon serveur.">
+          <b>Consulter la console</b>
+          <span>Voir les derniers événements</span>
+        </button>
+        <button class="suggestion" data-prompt="Explore les fichiers de mon serveur Falix.">
+          <b>Explorer les fichiers</b>
+          <span>Parcourir les dossiers du serveur</span>
+        </button>
+        <button class="suggestion" data-prompt="Recherche sur Internet les dernières nouveautés de Minecraft Bedrock et donne-moi tes sources.">
+          <b>Recherche Web</b>
+          <span>Trouver des informations récentes</span>
+        </button>
         <button class="suggestion" data-prompt="Je veux travailler sur DemonGuard.">
           <b>Développer DemonGuard</b>
           <span>Add-on et outils d'administration</span>
-        </button>
-
-        <button class="suggestion" data-prompt="Explique-moi les dernières étapes du projet.">
-          <b>Continuer le projet</b>
-          <span>Reprendre étape par étape</span>
         </button>
       </div>
     </div>
@@ -678,10 +228,7 @@ button { cursor: pointer; }
       <textarea id="prompt" rows="1" placeholder="Message à Demon City IA…" aria-label="Votre message"></textarea>
       <button class="send" id="sendBtn" type="submit">↑</button>
     </form>
-
-    <div class="disclaimer">
-      Demon City IA peut faire des erreurs. Vérifie les actions importantes.
-    </div>
+    <div class="disclaimer">Demon City IA peut faire des erreurs. Vérifie les actions importantes.</div>
   </div>
 </main>
 
@@ -696,19 +243,18 @@ const promptBox = document.getElementById("prompt");
 const form = document.getElementById("chatForm");
 const sendBtn = document.getElementById("sendBtn");
 
-// Conserver la page d'accueil pour le bouton Nouvelle discussion
 const initialWelcome = document.getElementById("welcome").outerHTML;
 
-// Configuration du Markdown
+// Configuration Markdown
 if (window.marked) {
-  marked.setOptions({ gfm: true, breaks: true });
+  marked.setOptions({ gfm:true, breaks:true });
 }
 
 // Faire défiler vers le dernier message
 function scrollToBottom() {
   window.scrollTo({
-    top: document.body.scrollHeight,
-    behavior: "smooth"
+    top:document.body.scrollHeight,
+    behavior:"smooth"
   });
 }
 
@@ -721,7 +267,7 @@ function renderMarkdown(bubble, text) {
   }
 
   try {
-    const html = marked.parse(text, { gfm: true, breaks: true });
+    const html = marked.parse(text, { gfm:true, breaks:true });
     bubble.innerHTML = DOMPurify.sanitize(html);
     bubble.classList.add("markdown");
 
@@ -744,7 +290,7 @@ function renderMarkdown(bubble, text) {
   }
 }
 
-// Préparer les blocs de code et leur bouton Copier
+// Préparer les blocs de code et le bouton Copier
 function prepareCodeBlocks(bubble) {
   bubble.querySelectorAll("pre").forEach(pre => {
     if (pre.parentElement.classList.contains("code-block")) return;
@@ -777,7 +323,7 @@ function prepareCodeBlocks(bubble) {
       try {
         await navigator.clipboard.writeText(code.textContent);
         copyButton.textContent = "Copié !";
-      } catch (error) {
+      } catch {
         copyButton.textContent = "Copie impossible";
       }
 
@@ -786,24 +332,21 @@ function prepareCodeBlocks(bubble) {
       }, 1800);
     });
 
-    toolbar.appendChild(language);
-    toolbar.appendChild(copyButton);
-
+    toolbar.append(language, copyButton);
     pre.parentNode.insertBefore(wrapper, pre);
-    wrapper.appendChild(toolbar);
-    wrapper.appendChild(pre);
+    wrapper.append(toolbar, pre);
 
     if (window.hljs) {
       try {
         hljs.highlightElement(code);
-      } catch (error) {
+      } catch {
         console.warn("Coloration du code impossible.");
       }
     }
   });
 }
 
-// Ajouter un message dans la conversation
+// Ajouter un message
 function addMessage(text, role) {
   const welcome = document.getElementById("welcome");
   if (welcome) welcome.remove();
@@ -820,19 +363,18 @@ function addMessage(text, role) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-
   renderMarkdown(bubble, text);
 
   row.appendChild(bubble);
   conversation.appendChild(row);
-
   scrollToBottom();
+
   return bubble;
 }
 
-// Ajouter une carte de commande avec les boutons Valider et Refuser
+// Carte de confirmation générique : commande, serveur ou fichier
 function addActionCard(bubble, action) {
-  if (!action || !action.actionId || !action.command) return;
+  if (!action || !action.actionId) return;
 
   const card = document.createElement("div");
   card.className = "action-card";
@@ -842,21 +384,22 @@ function addActionCard(bubble, action) {
 
   const icon = document.createElement("span");
   icon.className = "action-icon";
-  icon.textContent = "⌘";
+  icon.textContent = "✓";
 
   const headingText = document.createElement("span");
   headingText.textContent = "Confirmation nécessaire";
-
   heading.append(icon, headingText);
 
   const description = document.createElement("div");
   description.className = "action-description";
   description.textContent =
-    "Demon City IA souhaite envoyer cette commande à ton serveur :";
+    "Vérifie cette action avant de l'envoyer à ton serveur Falix :";
 
   const command = document.createElement("code");
   command.className = "action-command";
-  command.textContent = "/" + action.command;
+
+  // Le serveur fournit ici un libellé, pas toujours une commande Minecraft
+  command.textContent = action.command || "Action à confirmer";
 
   const expiry = document.createElement("div");
   expiry.className = "action-expiry";
@@ -879,27 +422,27 @@ function addActionCard(bubble, action) {
   card.append(heading, description, command, expiry, buttons);
   bubble.appendChild(card);
 
-  // Désactiver les boutons après le traitement
-  function lockButtons(message) {
+  // Désactiver les boutons après une réponse du serveur
+  function lockButtons(label) {
     confirmButton.disabled = true;
     cancelButton.disabled = true;
-    confirmButton.textContent = message;
+    confirmButton.textContent = label;
     card.classList.add("finished");
   }
 
-  // Demander au serveur de valider ou d'annuler l'action
-  async function processAction(endpoint, buttonLabel, successLabel) {
+  // Envoyer la validation ou l'annulation
+  async function processAction(endpoint, loadingLabel, doneLabel) {
     if (confirmButton.disabled || cancelButton.disabled) return;
 
     confirmButton.disabled = true;
     cancelButton.disabled = true;
-    confirmButton.textContent = buttonLabel;
+    confirmButton.textContent = loadingLabel;
 
     try {
       const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actionId: action.actionId })
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ actionId:action.actionId })
       });
 
       const data = await response.json();
@@ -910,17 +453,11 @@ function addActionCard(bubble, action) {
         );
       }
 
-      lockButtons(successLabel);
-
-      // Ajouter un nouveau message de Demon City IA
-      addMessage(
-        data.reply || "La demande a été traitée.",
-        "assistant"
-      );
+      lockButtons(doneLabel);
+      addMessage(data.reply || "La demande a été traitée.", "assistant");
 
     } catch (error) {
       lockButtons("Demande terminée");
-
       addMessage(
         "Je n'ai pas pu terminer cette action : " + error.message,
         "assistant"
@@ -929,25 +466,17 @@ function addActionCard(bubble, action) {
   }
 
   confirmButton.addEventListener("click", () => {
-    processAction(
-      "/actions/confirm",
-      "Envoi en cours…",
-      "Commande envoyée"
-    );
+    processAction("/actions/confirm", "Envoi en cours…", "Validée");
   });
 
   cancelButton.addEventListener("click", () => {
-    processAction(
-      "/actions/cancel",
-      "Annulation…",
-      "Commande refusée"
-    );
+    processAction("/actions/cancel", "Annulation…", "Refusée");
   });
 
   scrollToBottom();
 }
 
-// Envoyer un message au moteur IA
+// Envoyer un message à Demon City IA
 async function sendMessage(text) {
   const clean = text.trim();
   if (!clean || sendBtn.disabled) return;
@@ -960,24 +489,19 @@ async function sendMessage(text) {
   sendBtn.disabled = true;
   sendBtn.textContent = "…";
 
-  const loading = addMessage(
-    "Demon City IA réfléchit…",
-    "assistant"
-  );
+  const loading = addMessage("Demon City IA réfléchit…", "assistant");
 
   try {
     const response = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: clean })
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ message:clean })
     });
 
     const data = await response.json();
 
     if (!response.ok || data.success === false) {
-      throw new Error(
-        data.error || "Impossible de contacter le moteur IA."
-      );
+      throw new Error(data.error || "Impossible de contacter le moteur IA.");
     }
 
     const answer =
@@ -991,10 +515,9 @@ async function sendMessage(text) {
       throw new Error("La réponse de l'IA est introuvable.");
     }
 
-    // Afficher la réponse de l'IA
     renderMarkdown(loading, answer);
 
-    // Afficher la carte si une commande attend validation
+    // Afficher une carte pour toutes les actions en attente
     if (data.pendingAction) {
       addActionCard(loading, data.pendingAction);
     }
@@ -1018,11 +541,10 @@ form.addEventListener("submit", event => {
   sendMessage(promptBox.value);
 });
 
-// Adapter la hauteur de la zone de texte
+// Ajuster la hauteur du champ
 promptBox.addEventListener("input", () => {
   promptBox.style.height = "auto";
-  promptBox.style.height =
-    Math.min(promptBox.scrollHeight, 150) + "px";
+  promptBox.style.height = Math.min(promptBox.scrollHeight, 150) + "px";
 });
 
 // Entrée pour envoyer, Maj + Entrée pour une nouvelle ligne
@@ -1036,9 +558,7 @@ promptBox.addEventListener("keydown", event => {
 // Suggestions de la page d'accueil
 conversation.addEventListener("click", event => {
   const button = event.target.closest("[data-prompt]");
-  if (!button) return;
-
-  sendMessage(button.dataset.prompt);
+  if (button) sendMessage(button.dataset.prompt);
 });
 
 // Nouvelle discussion
@@ -1046,12 +566,23 @@ document.getElementById("newChat").addEventListener("click", () => {
   conversation.innerHTML = initialWelcome;
   document.body.classList.remove("menu-open");
   document.getElementById("pageTitle").textContent = "Discussion";
+
   document.querySelectorAll(".nav button").forEach(item => {
-    item.classList.toggle("active", item.dataset.section === "Discussion");
+    item.classList.toggle(
+      "active",
+      item.dataset.section === "Discussion"
+    );
   });
 });
 
-// Navigation latérale
+// Navigation des sections
+const sectionPrompts = {
+  Serveur:"Consulte le statut réel de mon serveur Falix et indique-moi s'il fonctionne. Ne démarre, n'arrête et ne redémarre rien sans me demander.",
+  Console:"Consulte les dernières lignes de la console de mon serveur Falix et explique-moi ce qui s'y passe.",
+  Fichiers:"Explore les fichiers et dossiers de mon serveur Falix. Commence par afficher le contenu du dossier racine.",
+  Web:"Recherche sur Internet les dernières informations utiles à Demon City et donne-moi les sources."
+};
+
 document.querySelectorAll(".nav button").forEach(button => {
   button.addEventListener("click", () => {
     document.querySelectorAll(".nav button").forEach(item => {
@@ -1060,20 +591,47 @@ document.querySelectorAll(".nav button").forEach(button => {
 
     button.classList.add("active");
 
-    document.getElementById("pageTitle").textContent =
-      button.dataset.section;
+    const section = button.dataset.section;
+    document.getElementById("pageTitle").textContent = section;
 
     document.body.classList.remove("menu-open");
 
-    if (button.dataset.section !== "Discussion") {
-      addMessage(
-        button.dataset.section +
-        " : cette section sera activée dans une prochaine étape.",
-        "assistant"
-      );
+    if (section === "Discussion") {
+      conversation.innerHTML = initialWelcome;
+      return;
     }
+
+    sendMessage(sectionPrompts[section]);
   });
 });
+
+// Vérifier l'état général de Demon City IA
+async function checkStatus() {
+  const dot = document.getElementById("statusDot");
+  const label = document.getElementById("statusText");
+
+  try {
+    const response = await fetch("/status");
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error("Statut indisponible");
+    }
+
+    if (data.aiConfigured && data.falixConfigured) {
+      dot.classList.remove("offline");
+      label.textContent = "IA en ligne · Falix connecté";
+    } else {
+      dot.classList.add("offline");
+      label.textContent = "Configuration incomplète";
+    }
+  } catch {
+    dot.classList.add("offline");
+    label.textContent = "Connexion indisponible";
+  }
+}
+
+checkStatus();
 
 // Menu mobile
 document.getElementById("menuBtn").addEventListener("click", () => {
