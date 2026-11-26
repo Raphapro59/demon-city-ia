@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "100kb" }));
 
-// Sessions et protections
+// Stockage temporaire des sessions et actions
 const sessions = new Map();
 const loginAttempts = new Map();
 const pendingActions = new Map();
@@ -37,7 +37,7 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Récupérer la session
+// Récupérer et vérifier la session
 function getSession(req) {
   if (!securityConfigured()) return null;
 
@@ -271,50 +271,36 @@ Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
 
 Tu parles français naturellement, clairement et de manière conviviale.
 Tu connais Minecraft Bedrock et le projet Demon City.
-Tu ne prétends jamais avoir effectué une action que tu n'as pas réellement effectuée.
+Tu ne prétends jamais avoir effectué une action non réalisée.
 
-OUTILS DISPONIBLES :
-
-- get_server_status : consulter le statut réel du serveur Falix.
-- get_console_log : consulter les dernières lignes de la console.
+OUTILS :
+- get_server_status : consulter le statut réel du serveur.
+- get_console_log : consulter les dernières lignes de console.
 - prepare_server_command : préparer une commande Minecraft.
 - prepare_server_power : préparer start, stop ou restart.
 - list_server_files : explorer les dossiers Falix.
 - read_server_file : lire un fichier Falix.
-- prepare_file_write : préparer la modification ou création d'un fichier.
+- prepare_file_write : préparer la modification d'un fichier.
 
-RECHERCHE INTERNET :
-
+RECHERCHE :
 Tu disposes de browser_search.
-Utilise-le quand l'utilisateur demande une recherche Internet ou des informations récentes.
-Privilégie les sources officielles et fiables.
-Présente les liens et résume les résultats.
+Utilise-le pour les recherches Internet et les informations récentes.
 Ne prétends jamais avoir recherché si aucune recherche n'a été effectuée.
 
 CONTRÔLE FALIX :
-
-Si l'utilisateur demande le statut, utilise get_server_status.
-S'il demande les logs, utilise get_console_log.
 Pour démarrer, arrêter ou redémarrer, utilise prepare_server_power.
-Ne propose jamais de lancer ces actions avec une commande Minecraft "stop".
+Ne remplace jamais ces actions par une commande Minecraft.
 
 FICHIERS :
-
-Utilise list_server_files pour explorer un dossier.
-Utilise read_server_file pour lire un fichier.
-Utilise prepare_file_write pour modifier ou créer un fichier.
-Ne prétends jamais avoir modifié un fichier avant sa validation et la réponse positive de Falix.
+Utilise les outils de lecture et d'exploration.
+Les modifications doivent toujours attendre la validation de l'utilisateur.
 Ne supprime jamais un fichier sans autorisation explicite.
 
 CONFIRMATIONS :
-
-Les actions qui modifient le serveur doivent être préparées.
-L'interface affiche les boutons Valider et Refuser.
-Ne demande jamais de code de confirmation.
-Ne prétends jamais qu'une action est exécutée avant le clic sur Valider et la réponse positive de Falix.
+Les actions qui modifient le serveur nécessitent une confirmation.
+Ne prétends jamais qu'une action est exécutée avant sa validation et la réponse positive de Falix.
 
 SÉCURITÉ :
-
 Ne révèle jamais les clés API, mots de passe ou secrets.
 Ne prétends jamais avoir accès à des fonctions non disponibles.
 `;
@@ -329,6 +315,35 @@ function getFalixConfig() {
   }
 
   return { apiKey, serverId };
+}
+
+// Extraire un lien de vérification officiel Falix
+function getFalixActionUrl(result) {
+  const candidates = [
+    result?.error?.action_url,
+    result?.action_url,
+    result?.data?.action_url
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+
+    try {
+      const url = new URL(candidate);
+
+      const officialHost =
+        url.hostname === "falixnodes.net" ||
+        url.hostname.endsWith(".falixnodes.net");
+
+      if (url.protocol === "https:" && officialHost) {
+        return url.href;
+      }
+    } catch {
+      // Ignorer les liens invalides
+    }
+  }
+
+  return null;
 }
 
 // Fonction commune pour appeler Falix
@@ -358,14 +373,14 @@ async function falixRequest(endpoint, options = {}) {
 
     const error = new Error(message);
     error.status = response.status;
-    error.actionUrl = result.error?.action_url || null;
+    error.actionUrl = getFalixActionUrl(result);
     throw error;
   }
 
   return result.data;
 }
 
-// Raccourci pour construire les chemins serveur
+// Construire les chemins API du serveur
 function serverEndpoint(pathname) {
   const { serverId } = getFalixConfig();
   return `/servers/${encodeURIComponent(serverId)}${pathname}`;
@@ -419,7 +434,7 @@ async function sendFalixCommand(command) {
   };
 }
 
-// Contrôle du serveur
+// Démarrer, arrêter ou redémarrer le serveur
 async function powerFalixServer(signal) {
   if (!["start", "stop", "restart"].includes(signal)) {
     throw new Error("Action serveur non autorisée.");
@@ -496,7 +511,10 @@ async function writeFalixFile(filePath, content) {
     throw new Error("Chemin de fichier invalide.");
   }
 
-  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 60000) {
+  if (
+    typeof content !== "string" ||
+    Buffer.byteLength(content, "utf8") > 60000
+  ) {
     throw new Error("Le contenu du fichier est invalide ou trop volumineux.");
   }
 
@@ -518,7 +536,6 @@ async function writeFalixFile(filePath, content) {
 // Créer une action en attente de confirmation
 function createPendingAction(sessionId, action) {
   const actionId = crypto.randomBytes(24).toString("base64url");
-
   const expiresAt = Date.now() + ACTION_DURATION;
 
   pendingActions.set(actionId, {
@@ -550,7 +567,6 @@ function prepareCommand(sessionId, command) {
     throw new Error("Les commandes sur plusieurs lignes sont interdites.");
   }
 
-  // Les actions de contrôle passent par l'API Falix, pas par la console
   const forbidden = ["stop", "restart", "kill", "op", "deop"];
   const firstWord = cleaned.split(/\s+/)[0].toLowerCase();
 
@@ -586,7 +602,10 @@ function preparePower(sessionId, signal) {
 
 // Préparer une modification de fichier
 function prepareFileWrite(sessionId, filePath, content) {
-  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 60000) {
+  if (
+    typeof content !== "string" ||
+    Buffer.byteLength(content, "utf8") > 60000
+  ) {
     throw new Error("Contenu de fichier invalide ou trop volumineux.");
   }
 
@@ -945,7 +964,6 @@ app.post("/chat", async (req, res) => {
       { role: "user", content: message.trim() }
     ];
 
-    // Première réponse Groq : les outils Web et Falix sont disponibles
     const assistantMessage = await callGroq(apiKey, messages);
 
     if (!assistantMessage) {
@@ -954,7 +972,7 @@ app.post("/chat", async (req, res) => {
 
     let pendingAction = null;
 
-    // Traiter les fonctions Falix demandées par Groq
+    // Traiter les fonctions demandées par Groq
     if (assistantMessage.tool_calls?.length) {
       messages.push(assistantMessage);
 
@@ -1056,7 +1074,6 @@ app.post("/chat", async (req, res) => {
         });
       }
 
-      // Demander à Groq de formuler la réponse finale
       const finalMessage = await callGroq(apiKey, messages, false);
       const finalAnswer = finalMessage?.content;
 
@@ -1071,7 +1088,6 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    // Réponse normale ou réponse issue de browser_search
     if (!assistantMessage.content) {
       throw new Error("Groq n'a pas renvoyé de réponse.");
     }
