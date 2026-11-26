@@ -3,6 +3,7 @@
   "name": "demon-city-ia",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Assistant IA pour le serveur Minecraft Demon City",
   "main": "server.js",
   "scripts": {
