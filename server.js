@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
+import pg from "pg";
+
+const { Pool } = pg;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +13,153 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "2mb" }));
+
+const pool = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_SSL === "true"
+    ? { rejectUnauthorized: false }
+    : undefined,
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
+}) : null;
+
+let databaseReady = false;
+
+function getOwnerId() {
+  if (!securityConfigured()) {
+    throw new Error("Configuration de sécurité incomplète.");
+  }
+  return crypto.createHmac("sha256", process.env.SESSION_SECRET)
+    .update("demon-city-owner:")
+    .update(process.env.SITE_PASSWORD)
+    .digest("hex");
+}
+
+async function initializeDatabase() {
+  if (!pool) {
+    console.warn("DATABASE_URL absent : conversations persistantes désactivées.");
+    return false;
+  }
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS conversations (
+    id UUID PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    title VARCHAR(120) NOT NULL DEFAULT 'Nouvelle discussion',
+    pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS conversations_owner_updated_idx
+    ON conversations (owner_id, updated_at DESC)`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS conversation_messages (
+    id UUID PRIMARY KEY,
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('user','assistant')),
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS conversation_messages_conversation_created_idx
+    ON conversation_messages (conversation_id, created_at ASC)`);
+
+  databaseReady = true;
+  console.log("PostgreSQL connecté : conversations persistantes activées.");
+  return true;
+}
+
+function requireDatabase(res) {
+  if (!pool || !databaseReady) {
+    res.status(503).json({
+      success: false,
+      error: "La base PostgreSQL n'est pas disponible. Vérifie DATABASE_URL."
+    });
+    return false;
+  }
+  return true;
+}
+
+function isValidConversationId(id) {
+  return typeof id === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+}
+
+async function createConversation(ownerId) {
+  const count = await pool.query(
+    "SELECT COUNT(*)::int AS count FROM conversations WHERE owner_id=$1",
+    [ownerId]
+  );
+
+  if (count.rows[0].count >= 100) {
+    throw new Error("Limite de 100 conversations atteinte. Supprime une ancienne conversation.");
+  }
+
+  const id = crypto.randomUUID();
+  const result = await pool.query(
+    "INSERT INTO conversations (id,owner_id,title) VALUES ($1,$2,'Nouvelle discussion') RETURNING id,title,pinned,created_at,updated_at",
+    [id, ownerId]
+  );
+  return result.rows[0];
+}
+
+async function getOwnedConversation(ownerId, id) {
+  if (!isValidConversationId(id)) return null;
+  const result = await pool.query(
+    "SELECT id,title,pinned,created_at,updated_at FROM conversations WHERE id=$1 AND owner_id=$2",
+    [id, ownerId]
+  );
+  return result.rows[0] || null;
+}
+
+async function getConversationHistory(id) {
+  const result = await pool.query(
+    "SELECT role,content FROM conversation_messages WHERE conversation_id=$1 ORDER BY created_at DESC LIMIT 20",
+    [id]
+  );
+  return result.rows.reverse();
+}
+
+async function saveConversationExchange(ownerId, id, userMessage, assistantMessage) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const owned = await client.query(
+      "SELECT id,title FROM conversations WHERE id=$1 AND owner_id=$2 FOR UPDATE",
+      [id, ownerId]
+    );
+
+    if (!owned.rows.length) throw new Error("Conversation introuvable.");
+
+    await client.query(
+      "INSERT INTO conversation_messages (id,conversation_id,role,content) VALUES ($1,$2,'user',$3),($4,$2,'assistant',$5)",
+      [crypto.randomUUID(), id, userMessage, crypto.randomUUID(), assistantMessage]
+    );
+
+    if (owned.rows[0].title === "Nouvelle discussion") {
+      const title = userMessage.replace(/\s+/g, " ").trim().slice(0, 55) || "Nouvelle discussion";
+      await client.query(
+        "UPDATE conversations SET title=$1,updated_at=NOW() WHERE id=$2",
+        [title, id]
+      );
+    } else {
+      await client.query(
+        "UPDATE conversations SET updated_at=NOW() WHERE id=$1",
+        [id]
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 // Stockage temporaire des sessions et actions
 const sessions = new Map();
@@ -82,7 +232,6 @@ function getSession(req) {
 
   return { id, session };
 }
-
 // Page de connexion
 const loginPage = `<!doctype html>
 <html lang="fr">
@@ -243,6 +392,14 @@ app.use((req, res, next) => {
 
   if (current) {
     req.sessionId = current.id;
+    try {
+      req.ownerId = getOwnerId();
+    } catch {
+      return res.status(503).json({
+        success: false,
+        error: "Configuration de sécurité incomplète."
+      });
+    }
     return next();
   }
 
@@ -391,7 +548,6 @@ SÉCURITÉ :
 Ne révèle jamais les clés API, mots de passe ou secrets.
 Ne prétends jamais avoir accès à des fonctions non disponibles.
 `;
-
 // Configuration Falix
 function getFalixConfig() {
   const apiKey = process.env.FALIX_API_KEY;
@@ -422,9 +578,7 @@ function getFalixActionUrl(result) {
         url.hostname.endsWith(".falixnodes.net");
 
       if (url.protocol === "https:" && officialHost) return url.href;
-    } catch {
-      // Ignorer les liens invalides
-    }
+    } catch {}
   }
 
   return null;
@@ -529,9 +683,7 @@ async function getFalixLogs() {
 
       try {
         ws.close();
-      } catch {
-        // Connexion déjà fermée
-      }
+      } catch {}
 
       if (error) reject(error);
       else {
@@ -799,7 +951,6 @@ function prepareFileWrite(sessionId, filePath, content) {
     label: `Modifier le fichier : ${filePath}`
   });
 }
-
 // Interpréter les marqueurs DemonScript
 // Seul un message constitué exactement d'un marqueur est interprété.
 function parseDemonScript(content) {
@@ -820,7 +971,6 @@ function parseDemonScript(content) {
     };
   }
 
-  // Exemple accepté : 《{/give @a diamond 1}
   const commandMatch = value.match(/^《\{\/([^{}\r\n]+)\}$/);
 
   if (commandMatch) {
@@ -875,7 +1025,6 @@ app.post("/actions/confirm", async (req, res) => {
     });
   }
 
-  // Supprimer l'action avant l'appel pour empêcher les doubles clics
   pendingActions.delete(actionId);
 
   try {
@@ -1085,7 +1234,6 @@ function encodeDemonCodePng(image) {
   ihdr[11] = 0;
   ihdr[12] = 0;
 
-  // Chaque ligne PNG commence par un octet de filtre 0
   const rowLength = 1 + width * channels;
   const raw = Buffer.alloc(rowLength * height);
 
@@ -1314,7 +1462,219 @@ const availableTools = [
   }
 ];
 
-// Appel Groq
+// ================================
+// CONVERSATIONS POSTGRESQL
+// ================================
+
+// Récupérer les conversations
+app.get("/api/conversations", async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  try {
+    const result = await pool.query(
+      `SELECT id, title, pinned, created_at, updated_at
+       FROM conversations
+       WHERE owner_id = $1
+       ORDER BY pinned DESC, updated_at DESC`,
+      [req.ownerId]
+    );
+
+    return res.json({
+      success: true,
+      conversations: result.rows
+    });
+  } catch (error) {
+    console.error("Erreur récupération conversations :", error.message);
+    return res.status(500).json({
+      success: false,
+      error: "Impossible de récupérer les conversations."
+    });
+  }
+});
+
+// Créer une conversation
+app.post("/api/conversations", async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  try {
+    const conversation = await createConversation(req.ownerId);
+
+    return res.status(201).json({
+      success: true,
+      conversation
+    });
+  } catch (error) {
+    console.error("Erreur création conversation :", error.message);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message.includes("100")
+        ? error.message
+        : "Impossible de créer la conversation."
+    });
+  }
+});
+
+// Récupérer les messages d'une conversation
+app.get("/api/conversations/:id/messages", async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  try {
+    const conversation = await getOwnedConversation(
+      req.ownerId,
+      req.params.id
+    );
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        error: "Conversation introuvable."
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT id, role, content, created_at
+       FROM conversation_messages
+       WHERE conversation_id = $1
+       ORDER BY created_at ASC`,
+      [conversation.id]
+    );
+
+    return res.json({
+      success: true,
+      conversation,
+      messages: result.rows
+    });
+  } catch (error) {
+    console.error("Erreur récupération messages :", error.message);
+
+    return res.status(500).json({
+      success: false,
+      error: "Impossible de récupérer les messages."
+    });
+  }
+});
+
+// Modifier le titre ou épingler une conversation
+app.patch("/api/conversations/:id", async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  const title = req.body?.title;
+  const pinned = req.body?.pinned;
+
+  if (
+    title === undefined &&
+    pinned === undefined
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: "Aucune modification demandée."
+    });
+  }
+
+  if (
+    title !== undefined &&
+    (typeof title !== "string" || !title.trim() || title.trim().length > 120)
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: "Titre invalide. Maximum : 120 caractères."
+    });
+  }
+
+  if (pinned !== undefined && typeof pinned !== "boolean") {
+    return res.status(400).json({
+      success: false,
+      error: "La valeur pinned doit être booléenne."
+    });
+  }
+
+  try {
+    const values = [];
+    const updates = [];
+
+    if (title !== undefined) {
+      values.push(title.trim());
+      updates.push(`title = $${values.length}`);
+    }
+
+    if (pinned !== undefined) {
+      values.push(pinned);
+      updates.push(`pinned = $${values.length}`);
+    }
+
+    values.push(req.params.id);
+    const idIndex = values.length;
+
+    values.push(req.ownerId);
+    const ownerIndex = values.length;
+
+    const result = await pool.query(
+      `UPDATE conversations
+       SET ${updates.join(", ")}, updated_at = NOW()
+       WHERE id = $${idIndex} AND owner_id = $${ownerIndex}
+       RETURNING id, title, pinned, created_at, updated_at`,
+      values
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        success: false,
+        error: "Conversation introuvable."
+      });
+    }
+
+    return res.json({
+      success: true,
+      conversation: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Erreur modification conversation :", error.message);
+
+    return res.status(500).json({
+      success: false,
+      error: "Impossible de modifier la conversation."
+    });
+  }
+});
+
+// Supprimer une conversation et ses messages
+app.delete("/api/conversations/:id", async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM conversations
+       WHERE id = $1 AND owner_id = $2
+       RETURNING id`,
+      [req.params.id, req.ownerId]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        success: false,
+        error: "Conversation introuvable."
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Conversation supprimée."
+    });
+  } catch (error) {
+    console.error("Erreur suppression conversation :", error.message);
+
+    return res.status(500).json({
+      success: false,
+      error: "Impossible de supprimer la conversation."
+    });
+  }
+});
+
+// ================================
+// APPEL GROQ
+// ================================
+
 async function callGroq(apiKey, messages, includeTools = true) {
   const tools = includeTools
     ? [...availableTools, { type: "browser_search" }]
@@ -1350,10 +1710,14 @@ async function callGroq(apiKey, messages, includeTools = true) {
   return result.choices?.[0]?.message;
 }
 
-// Chat principal
+// ================================
+// CHAT PRINCIPAL AVEC HISTORIQUE
+// ================================
+
 app.post("/chat", async (req, res) => {
   const apiKey = process.env.GROQ_API_KEY;
-  const message = req.body?.message;
+  const userMessage = req.body?.message;
+  let conversationId = req.body?.conversationId || null;
 
   if (!apiKey) {
     return res.status(500).json({
@@ -1362,24 +1726,51 @@ app.post("/chat", async (req, res) => {
     });
   }
 
-  if (typeof message !== "string" || !message.trim()) {
+  if (
+    typeof userMessage !== "string" ||
+    !userMessage.trim()
+  ) {
     return res.status(400).json({
       success: false,
       error: "Message vide ou invalide."
     });
   }
 
-  if (message.length > 8000) {
+  if (userMessage.length > 8000) {
     return res.status(400).json({
       success: false,
       error: "Message trop long."
     });
   }
 
+  if (!requireDatabase(res)) return;
+
   try {
+    let conversation;
+
+    if (conversationId) {
+      conversation = await getOwnedConversation(
+        req.ownerId,
+        conversationId
+      );
+
+      if (!conversation) {
+        return res.status(404).json({
+          success: false,
+          error: "Conversation introuvable."
+        });
+      }
+    } else {
+      conversation = await createConversation(req.ownerId);
+      conversationId = conversation.id;
+    }
+
+    const history = await getConversationHistory(conversation.id);
+
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: message.trim() }
+      ...history,
+      { role: "user", content: userMessage.trim() }
     ];
 
     const assistantMessage = await callGroq(apiKey, messages);
@@ -1388,11 +1779,14 @@ app.post("/chat", async (req, res) => {
       throw new Error("Groq n'a pas renvoyé de réponse.");
     }
 
-    // DemonScript : ne traiter que les marqueurs seuls
+    // DemonScript
     const demonScript = parseDemonScript(assistantMessage.content);
 
     if (demonScript) {
-      const pendingAction = prepareDemonScript(req.sessionId, demonScript);
+      const pendingAction = prepareDemonScript(
+        req.sessionId,
+        demonScript
+      );
 
       const replies = {
         start: "Je te propose de démarrer le serveur Falix.",
@@ -1404,14 +1798,23 @@ app.post("/chat", async (req, res) => {
         ? `Je te propose d'envoyer cette commande Minecraft : ${demonScript.command}`
         : replies[demonScript.signal];
 
+      await saveConversationExchange(
+        req.ownerId,
+        conversation.id,
+        userMessage.trim(),
+        reply
+      );
+
       return res.json({
         success: true,
         reply,
-        pendingAction
+        pendingAction,
+        conversationId: conversation.id
       });
     }
 
     let pendingAction = null;
+    let finalAnswer = assistantMessage.content;
 
     // Traiter les fonctions demandées par Groq
     if (assistantMessage.tool_calls?.length) {
@@ -1422,7 +1825,9 @@ app.post("/chat", async (req, res) => {
 
         try {
           const functionName = toolCall.function?.name;
-          const args = JSON.parse(toolCall.function?.arguments || "{}");
+          const args = JSON.parse(
+            toolCall.function?.arguments || "{}"
+          );
 
           if (functionName === "get_server_status") {
             toolResult = JSON.stringify({
@@ -1435,7 +1840,11 @@ app.post("/chat", async (req, res) => {
               console: await getFalixLogs()
             });
           } else if (functionName === "prepare_server_command") {
-            const prepared = prepareCommand(req.sessionId, args.command);
+            const prepared = prepareCommand(
+              req.sessionId,
+              args.command
+            );
+
             pendingAction = prepared;
 
             toolResult = JSON.stringify({
@@ -1444,7 +1853,11 @@ app.post("/chat", async (req, res) => {
               command: prepared.command
             });
           } else if (functionName === "prepare_server_power") {
-            const prepared = preparePower(req.sessionId, args.signal);
+            const prepared = preparePower(
+              req.sessionId,
+              args.signal
+            );
+
             pendingAction = prepared;
 
             toolResult = JSON.stringify({
@@ -1453,7 +1866,9 @@ app.post("/chat", async (req, res) => {
               action: args.signal
             });
           } else if (functionName === "list_server_files") {
-            const files = await listFalixFiles(args.directory || "/");
+            const files = await listFalixFiles(
+              args.directory || "/"
+            );
 
             toolResult = JSON.stringify({
               success: true,
@@ -1500,40 +1915,52 @@ app.post("/chat", async (req, res) => {
         });
       }
 
-      const finalMessage = await callGroq(apiKey, messages, false);
-      const finalAnswer = finalMessage?.content;
+      const finalMessage = await callGroq(
+        apiKey,
+        messages,
+        false
+      );
+
+      finalAnswer = finalMessage?.content;
 
       if (!finalAnswer) {
         throw new Error("Réponse finale vide.");
       }
-
-      return res.json({
-        success: true,
-        reply: finalAnswer,
-        pendingAction
-      });
     }
 
-    if (!assistantMessage.content) {
+    if (!finalAnswer) {
       throw new Error("Groq n'a pas renvoyé de réponse.");
     }
 
+    await saveConversationExchange(
+      req.ownerId,
+      conversation.id,
+      userMessage.trim(),
+      finalAnswer
+    );
+
     return res.json({
       success: true,
-      reply: assistantMessage.content,
-      pendingAction: null
+      reply: finalAnswer,
+      pendingAction,
+      conversationId: conversation.id
     });
   } catch (error) {
-    console.error("Erreur serveur :", error.message);
+    console.error("Erreur chat :", error.message);
 
     return res.status(500).json({
       success: false,
-      error: "Impossible de contacter le moteur IA. Réessaie dans un instant."
+      error: error.message.includes("100")
+        ? error.message
+        : "Impossible de traiter la demande. Réessaie dans un instant."
     });
   }
 });
 
-// Nettoyage périodique des actions expirées
+// ================================
+// NETTOYAGE PERIODIQUE
+// ================================
+
 setInterval(() => {
   const now = Date.now();
 
@@ -1550,15 +1977,36 @@ setInterval(() => {
   }
 }, 60 * 1000).unref();
 
-// Démarrer Demon City IA
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("Diagnostic sécurité :", {
-    sitePasswordPresent: Boolean(process.env.SITE_PASSWORD),
-    sessionSecretPresent: Boolean(process.env.SESSION_SECRET),
-    sessionSecretLength: process.env.SESSION_SECRET?.length || 0
-  });
+// ================================
+// DEMARRAGE DU SERVEUR
+// ================================
 
-  console.log("Demon City IA démarré sur le port", PORT);
-  console.log("DemonScript activé.");
-  console.log("DemonCode activé.");
-});
+async function startServer() {
+  try {
+    await initializeDatabase();
+  } catch (error) {
+    databaseReady = false;
+    console.error(
+      "Connexion PostgreSQL impossible :",
+      error.message
+    );
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log("Diagnostic sécurité :", {
+      sitePasswordPresent: Boolean(process.env.SITE_PASSWORD),
+      sessionSecretPresent: Boolean(process.env.SESSION_SECRET),
+      sessionSecretLength: process.env.SESSION_SECRET?.length || 0
+    });
+
+    console.log("Demon City IA démarré sur le port", PORT);
+    console.log("DemonScript activé.");
+    console.log("DemonCode activé.");
+    console.log(
+      "Conversations PostgreSQL :",
+      databaseReady ? "activées" : "indisponibles"
+    );
+  });
+}
+
+startServer();
