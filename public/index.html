@@ -360,6 +360,53 @@ function scrollToBottom() {
   });
 }
 
+// Détecter un message DemonCode brut et le transformer en bloc de code
+function normalizeDemonCode(text) {
+  const source = String(text || "").trim();
+
+  if (/^\{image-size\s+\d+x\d+px\}/.test(source)) {
+    return "```demoncode\n" + source + "\n```";
+  }
+
+  return text;
+}
+
+// Copier du texte avec une solution de secours
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const temporary = document.createElement("textarea");
+  temporary.value = text;
+  temporary.style.position = "fixed";
+  temporary.style.opacity = "0";
+  document.body.appendChild(temporary);
+  temporary.select();
+
+  const success = document.execCommand("copy");
+  temporary.remove();
+
+  if (!success) {
+    throw new Error("Copie impossible sur cet appareil.");
+  }
+}
+
+// Télécharger un Blob en fichier PNG
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
 // Afficher le Markdown de manière sécurisée
 function renderMarkdown(bubble, text) {
   if (!window.marked || !window.DOMPurify) {
@@ -369,7 +416,8 @@ function renderMarkdown(bubble, text) {
   }
 
   try {
-    const html = marked.parse(text, { gfm:true, breaks:true });
+    const normalizedText = normalizeDemonCode(text);
+    const html = marked.parse(normalizedText, { gfm:true, breaks:true });
     bubble.innerHTML = DOMPurify.sanitize(html);
 
     bubble.classList.add("markdown");
@@ -424,7 +472,7 @@ function prepareCodeBlocks(bubble) {
 
     copyButton.addEventListener("click", async () => {
       try {
-        await navigator.clipboard.writeText(code.textContent);
+        await copyText(code.textContent);
         copyButton.textContent = "Copié !";
       } catch {
         copyButton.textContent = "Copie impossible";
@@ -449,7 +497,6 @@ function prepareCodeBlocks(bubble) {
     }
   });
 
-  // Chercher les blocs DemonCode après leur préparation
   renderDemonCodeBlocks(bubble);
 }
 
@@ -513,9 +560,7 @@ function parseDemonCode(source) {
 
     for (let x = 0; x < width; x++) {
       const values = row[x].split("-").map(value => {
-        if (!/^\d+$/.test(value)) {
-          return NaN;
-        }
+        if (!/^\d+$/.test(value)) return NaN;
         return Number(value);
       });
 
@@ -630,20 +675,16 @@ async function renderDemonCodeBlocks(bubble) {
         percent.textContent =
           `Génération de l’image (${percentage}%)`;
 
-        // Laisser l'interface actualiser la progression
         await new Promise(resolve => requestAnimationFrame(resolve));
       }
 
       context.putImageData(imageData, 0, 0);
 
-      canvas.style.width =
-        Math.min(image.width * 4, 600) + "px";
-
+      canvas.style.width = Math.min(image.width * 4, 600) + "px";
       canvas.style.height = "auto";
 
       preview.appendChild(canvas);
 
-      // Préparer les boutons d'action
       const actions = document.createElement("div");
       actions.className = "demon-image-actions";
 
@@ -659,29 +700,34 @@ async function renderDemonCodeBlocks(bubble) {
       shareButton.type = "button";
       shareButton.textContent = "Partager";
 
+      // Créer le fichier PNG
+      function createPngBlob() {
+        return new Promise((resolve, reject) => {
+          canvas.toBlob(blob => {
+            if (blob) resolve(blob);
+            else reject(new Error("Création du PNG impossible."));
+          }, "image/png");
+        });
+      }
+
       // Télécharger l'image PNG
-      downloadButton.addEventListener("click", () => {
-        canvas.toBlob(blob => {
-          if (!blob) {
-            percent.textContent = "Impossible de créer le PNG.";
-            return;
-          }
+      downloadButton.addEventListener("click", async () => {
+        downloadButton.disabled = true;
 
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-
-          link.href = url;
-          link.download = "demoncode-image.png";
-          link.click();
-
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        }, "image/png");
+        try {
+          const blob = await createPngBlob();
+          downloadBlob(blob, "demoncode-image.png");
+        } catch (error) {
+          percent.textContent = error.message;
+        } finally {
+          downloadButton.disabled = false;
+        }
       });
 
       // Copier le DemonCode
       copyButton.addEventListener("click", async () => {
         try {
-          await navigator.clipboard.writeText(source);
+          await copyText(source);
           copyButton.textContent = "Copié !";
         } catch {
           copyButton.textContent = "Copie impossible";
@@ -692,16 +738,12 @@ async function renderDemonCodeBlocks(bubble) {
         }, 1800);
       });
 
-      // Partager le fichier image avec le partage natif
+      // Partager le fichier PNG avec le partage natif
       shareButton.addEventListener("click", async () => {
-        try {
-          const blob = await new Promise(resolve => {
-            canvas.toBlob(resolve, "image/png");
-          });
+        shareButton.disabled = true;
 
-          if (!blob) {
-            throw new Error("Création du PNG impossible.");
-          }
+        try {
+          const blob = await createPngBlob();
 
           const file = new File(
             [blob],
@@ -709,25 +751,41 @@ async function renderDemonCodeBlocks(bubble) {
             { type:"image/png" }
           );
 
-          if (
-            navigator.share &&
-            navigator.canShare &&
-            navigator.canShare({ files:[file] })
-          ) {
+          const canShareFile =
+            typeof navigator.share === "function" &&
+            typeof navigator.canShare === "function" &&
+            navigator.canShare({ files:[file] });
+
+          if (canShareFile) {
             await navigator.share({
               title:"Image DemonCode",
               text:"Image créée avec Demon City IA.",
               files:[file]
             });
+
+            percent.textContent = "Partage terminé.";
           } else {
+            // Secours : télécharger le fichier si le partage natif est indisponible
+            downloadBlob(blob, "demoncode-image.png");
             percent.textContent =
-              "Le partage de fichiers n'est pas disponible sur cet appareil.";
+              "Partage natif indisponible : le PNG a été téléchargé.";
           }
+
         } catch (error) {
-          if (error.name !== "AbortError") {
-            percent.textContent =
-              "Impossible de partager cette image.";
+          if (error.name === "AbortError") {
+            percent.textContent = "Partage annulé.";
+          } else {
+            try {
+              const blob = await createPngBlob();
+              downloadBlob(blob, "demoncode-image.png");
+              percent.textContent =
+                "Partage impossible : le PNG a été téléchargé à la place.";
+            } catch {
+              percent.textContent = "Impossible de partager ou télécharger cette image.";
+            }
           }
+        } finally {
+          shareButton.disabled = false;
         }
       });
 
@@ -889,7 +947,6 @@ function addActionCard(bubble, action) {
     card.classList.add("finished");
   }
 
-  // Envoyer la validation ou l'annulation
   async function processAction(endpoint, loadingLabel, doneLabel) {
     if (confirmButton.disabled || cancelButton.disabled) return;
 
