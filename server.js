@@ -1,15 +1,15 @@
-
 import express from "express";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "2mb" }));
 
 // Stockage temporaire des sessions et actions
 const sessions = new Map();
@@ -20,7 +20,12 @@ const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const ACTION_DURATION = 2 * 60 * 1000;
 const COOKIE_NAME = "dcia_session";
 
-// Vérifier la configuration de sécurité
+// Configuration DemonCode
+const DEMONCODE_MAX_WIDTH = 256;
+const DEMONCODE_MAX_HEIGHT = 256;
+const DEMONCODE_MAX_LENGTH = 1800000;
+
+// Sécurité
 function securityConfigured() {
   return Boolean(
     process.env.SITE_PASSWORD &&
@@ -29,7 +34,6 @@ function securityConfigured() {
   );
 }
 
-// Signer les sessions
 function signSession(id) {
   return crypto
     .createHmac("sha256", process.env.SESSION_SECRET)
@@ -37,7 +41,6 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Récupérer et vérifier la session
 function getSession(req) {
   if (!securityConfigured()) return null;
 
@@ -90,20 +93,15 @@ const loginPage = `<!doctype html>
 <title>Connexion - Demon City IA</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;
-background:#171316;color:#f5eef3;font:15px system-ui,sans-serif;padding:20px}
-.card{width:100%;max-width:390px;background:#211a20;border:1px solid #392a35;
-border-radius:20px;padding:28px;box-shadow:0 20px 60px #0005}
-.mark{width:54px;height:54px;display:grid;place-items:center;border-radius:16px;
-background:linear-gradient(145deg,#c13a65,#65152f);font-weight:900;font-size:20px}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#171316;color:#f5eef3;font:15px system-ui,sans-serif;padding:20px}
+.card{width:100%;max-width:390px;background:#211a20;border:1px solid #392a35;border-radius:20px;padding:28px;box-shadow:0 20px 60px #0005}
+.mark{width:54px;height:54px;display:grid;place-items:center;border-radius:16px;background:linear-gradient(145deg,#c13a65,#65152f);font-weight:900;font-size:20px}
 h1{font-size:23px;margin:20px 0 5px}
 p{color:#aa9ca7;font-size:13px;margin:0 0 22px}
 label{display:block;font-size:12px;margin-bottom:8px;color:#d8cbd4}
-input{width:100%;padding:13px;border:1px solid #51404b;border-radius:10px;
-background:#171316;color:white;outline:none}
+input{width:100%;padding:13px;border:1px solid #51404b;border-radius:10px;background:#171316;color:white;outline:none}
 input:focus{border-color:#c33562}
-button{width:100%;margin-top:14px;padding:13px;border:0;border-radius:10px;
-background:#a92750;color:white;font-weight:700;cursor:pointer}
+button{width:100%;margin-top:14px;padding:13px;border:0;border-radius:10px;background:#a92750;color:white;font-weight:700;cursor:pointer}
 #error{color:#ff829c;font-size:12px;margin-top:12px;min-height:18px}
 </style>
 </head>
@@ -114,8 +112,7 @@ background:#a92750;color:white;font-weight:700;cursor:pointer}
 <p>Connecte-toi pour accéder à ton espace de travail.</p>
 <form id="loginForm">
 <label for="password">Mot de passe</label>
-<input id="password" type="password" autocomplete="current-password"
-placeholder="Ton mot de passe" required>
+<input id="password" type="password" autocomplete="current-password" placeholder="Ton mot de passe" required>
 <button id="submit" type="submit">Se connecter</button>
 <div id="error" role="alert"></div>
 </form>
@@ -125,7 +122,6 @@ const form=document.getElementById("loginForm");
 const input=document.getElementById("password");
 const error=document.getElementById("error");
 const button=document.getElementById("submit");
-
 form.addEventListener("submit",async event=>{
   event.preventDefault();
   button.disabled=true;
@@ -265,7 +261,7 @@ app.get("/", (req, res) => {
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// Instructions de Demon City IA
+// Instructions du cerveau Demon City IA
 const SYSTEM_PROMPT = `
 Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
 
@@ -273,9 +269,40 @@ Tu parles français naturellement, clairement et de manière conviviale.
 Tu connais Minecraft Bedrock et le projet Demon City.
 Tu ne prétends jamais avoir effectué une action non réalisée.
 
+LANGAGES INTERNES :
+
+DemonScript sert exclusivement à demander des actions sur le serveur.
+Ses symboles sont :
+- ¥ : démarrer le serveur Falix.
+- £ : arrêter le serveur Falix.
+- ₩ : redémarrer le serveur Falix.
+- 《{/commande} : préparer une commande Minecraft.
+
+RÈGLES DEMONSCRIPT :
+Quand l'utilisateur demande clairement une action de contrôle du serveur,
+réponds uniquement avec le symbole correspondant.
+Pour une commande Minecraft, réponds uniquement avec :
+《{/commande Minecraft}
+
+N'ajoute aucun texte autour du symbole.
+N'émets jamais ces symboles dans une conversation ordinaire,
+une explication, un exemple ou une simple question.
+Ne transforme jamais une question sur une commande en exécution.
+En cas de doute sur l'intention, pose une question normale.
+Le serveur demandera toujours une confirmation avant l'exécution.
+
+DemonCode sert exclusivement à créer et convertir des images.
+Sa syntaxe comprend :
+{image-size largeurxhauteurpx}
+{format RGB}
+ou
+{format RGBA}
+puis les couleurs des pixels, organisées par lignes.
+Ne confonds jamais DemonCode et DemonScript.
+
 OUTILS :
 - get_server_status : consulter le statut réel du serveur Falix.
-- get_console_log : lire les dernières lignes de la console Falix en direct via WebSocket.
+- get_console_log : lire les dernières lignes de la console Falix en direct.
 - prepare_server_command : préparer une commande Minecraft.
 - prepare_server_power : préparer start, stop ou restart.
 - list_server_files : explorer les dossiers Falix.
@@ -288,7 +315,7 @@ Utilise-le pour les recherches Internet et les informations récentes.
 Ne prétends jamais avoir recherché si aucune recherche n'a été effectuée.
 
 CONTRÔLE FALIX :
-Pour démarrer, arrêter ou redémarrer, utilise prepare_server_power.
+Pour démarrer, arrêter ou redémarrer, utilise DemonScript.
 Ne remplace jamais ces actions par une commande Minecraft.
 
 FICHIERS :
@@ -334,9 +361,7 @@ function getFalixActionUrl(result) {
         url.hostname === "falixnodes.net" ||
         url.hostname.endsWith(".falixnodes.net");
 
-      if (url.protocol === "https:" && officialHost) {
-        return url.href;
-      }
+      if (url.protocol === "https:" && officialHost) return url.href;
     } catch {
       // Ignorer les liens invalides
     }
@@ -379,7 +404,6 @@ async function falixRequest(endpoint, options = {}) {
   return result.data;
 }
 
-// Construire les chemins API du serveur
 function serverEndpoint(pathname) {
   const { serverId } = getFalixConfig();
   return `/servers/${encodeURIComponent(serverId)}${pathname}`;
@@ -401,16 +425,14 @@ async function getFalixStatus() {
   };
 }
 
-// Lire la console Falix en direct grâce au WebSocket
+// Lire la console Falix en direct
 async function getFalixLogs() {
-  // Node.js 22 ou supérieur est nécessaire
   if (typeof globalThis.WebSocket !== "function") {
     throw new Error(
       "WebSocket indisponible. Demon City IA nécessite Node.js 22 ou supérieur."
     );
   }
 
-  // Demander un token temporaire à Falix
   const session = await falixRequest(
     serverEndpoint("/console/token"),
     { method: "POST" }
@@ -424,7 +446,6 @@ async function getFalixLogs() {
     throw new Error("Falix n'a pas fourni de session WebSocket valide.");
   }
 
-  // Vérifier que l'adresse du WebSocket est sécurisée
   const socketUrl = new URL(session.socket);
 
   if (socketUrl.protocol !== "wss:") {
@@ -439,26 +460,21 @@ async function getFalixLogs() {
     let finished = false;
     let collectionTimer = null;
 
-    // Fermer proprement la connexion
     function finish(error = null) {
       if (finished) return;
       finished = true;
 
       clearTimeout(connectionTimer);
-
-      if (collectionTimer) {
-        clearTimeout(collectionTimer);
-      }
+      if (collectionTimer) clearTimeout(collectionTimer);
 
       try {
         ws.close();
       } catch {
-        // La connexion est peut-être déjà fermée
+        // Connexion déjà fermée
       }
 
-      if (error) {
-        reject(error);
-      } else {
+      if (error) reject(error);
+      else {
         resolve({
           source: "websocket",
           live: true,
@@ -468,14 +484,10 @@ async function getFalixLogs() {
       }
     }
 
-    // Éviter une connexion bloquée
     const connectionTimer = setTimeout(() => {
-      finish(
-        new Error("Délai dépassé lors de la connexion à la console Falix.")
-      );
+      finish(new Error("Délai dépassé lors de la connexion à la console Falix."));
     }, 12000);
 
-    // Authentification WebSocket
     ws.addEventListener("open", () => {
       ws.send(JSON.stringify({
         event: "auth",
@@ -483,8 +495,7 @@ async function getFalixLogs() {
       }));
     });
 
-    // Réception des messages de Falix
-    ws.addEventListener("message", (event) => {
+    ws.addEventListener("message", event => {
       let packet;
 
       try {
@@ -496,57 +507,39 @@ async function getFalixLogs() {
       const eventName = packet?.event;
       const args = Array.isArray(packet?.args) ? packet.args : [];
 
-      // Authentification réussie
       if (eventName === "auth success" && !authenticated) {
         authenticated = true;
 
-        // Demander les dernières lignes de console
         ws.send(JSON.stringify({
           event: "send logs",
           args: []
         }));
 
-        // Laisser le temps aux lignes d'arriver
         collectionTimer = setTimeout(() => finish(), 1800);
         return;
       }
 
-      // Token refusé
       if (eventName === "jwt error") {
         finish(new Error("Falix a refusé le token WebSocket."));
         return;
       }
 
-      // Récupérer les lignes de console
       if (
         eventName === "console output" &&
         typeof args[0] === "string"
       ) {
         lines.push(args[0]);
-
-        // Garder au maximum 500 lignes en mémoire
-        if (lines.length > 500) {
-          lines.shift();
-        }
+        if (lines.length > 500) lines.shift();
       }
     });
 
-    // Erreur WebSocket
     ws.addEventListener("error", () => {
-      finish(
-        new Error("Impossible de communiquer avec le WebSocket Falix.")
-      );
+      finish(new Error("Impossible de communiquer avec le WebSocket Falix."));
     });
 
-    // Fermeture de la connexion
     ws.addEventListener("close", () => {
-      if (authenticated) {
-        finish();
-      } else {
-        finish(
-          new Error("Falix a fermé la connexion avant l'authentification.")
-        );
-      }
+      if (authenticated) finish();
+      else finish(new Error("Falix a fermé la connexion avant l'authentification."));
     });
   });
 }
@@ -557,9 +550,7 @@ async function sendFalixCommand(command) {
     serverEndpoint("/commands"),
     {
       method: "POST",
-      headers: {
-        "Idempotency-Key": crypto.randomUUID()
-      },
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ command })
     }
   );
@@ -570,7 +561,7 @@ async function sendFalixCommand(command) {
   };
 }
 
-// Démarrer, arrêter ou redémarrer le serveur
+// Contrôle du serveur
 async function powerFalixServer(signal) {
   if (!["start", "stop", "restart"].includes(signal)) {
     throw new Error("Action serveur non autorisée.");
@@ -580,18 +571,12 @@ async function powerFalixServer(signal) {
     serverEndpoint("/power"),
     {
       method: "POST",
-      headers: {
-        "Idempotency-Key": crypto.randomUUID()
-      },
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ signal })
     }
   );
 
-  return {
-    accepted: true,
-    signal,
-    result: data
-  };
+  return { accepted: true, signal, result: data };
 }
 
 // Explorer un dossier
@@ -610,9 +595,7 @@ async function listFalixFiles(directory = "/") {
     offset: "0"
   });
 
-  return await falixRequest(
-    serverEndpoint(`/files?${params}`)
-  );
+  return await falixRequest(serverEndpoint(`/files?${params}`));
 }
 
 // Lire un fichier texte
@@ -658,18 +641,13 @@ async function writeFalixFile(filePath, content) {
     serverEndpoint("/files/content"),
     {
       method: "PUT",
-      headers: {
-        "Idempotency-Key": crypto.randomUUID()
-      },
-      body: JSON.stringify({
-        path: filePath,
-        content
-      })
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ path: filePath, content })
     }
   );
 }
 
-// Créer une action en attente de confirmation
+// Préparer une action avec expiration
 function createPendingAction(sessionId, action) {
   const actionId = crypto.randomBytes(24).toString("base64url");
   const expiresAt = Date.now() + ACTION_DURATION;
@@ -717,7 +695,7 @@ function prepareCommand(sessionId, command) {
   });
 }
 
-// Préparer start / stop / restart
+// Préparer le contrôle Falix
 function preparePower(sessionId, signal) {
   if (!["start", "stop", "restart"].includes(signal)) {
     throw new Error("Action serveur invalide.");
@@ -762,7 +740,53 @@ function prepareFileWrite(sessionId, filePath, content) {
   });
 }
 
-// Valider une action
+// Interpréter les marqueurs DemonScript
+// Seul un message constitué exactement d'un marqueur est interprété.
+function parseDemonScript(content) {
+  if (typeof content !== "string") return null;
+
+  const value = content.trim();
+
+  const powers = {
+    "¥": "start",
+    "£": "stop",
+    "₩": "restart"
+  };
+
+  if (Object.hasOwn(powers, value)) {
+    return {
+      type: "power",
+      signal: powers[value]
+    };
+  }
+
+  // Exemple accepté : 《{/give @a diamond 1}
+  const commandMatch = value.match(/^《\{\/([^{}\r\n]+)\}$/);
+
+  if (commandMatch) {
+    return {
+      type: "command",
+      command: commandMatch[1].trim()
+    };
+  }
+
+  return null;
+}
+
+// Créer l'action DemonScript en attente
+function prepareDemonScript(sessionId, script) {
+  if (script.type === "power") {
+    return preparePower(sessionId, script.signal);
+  }
+
+  if (script.type === "command") {
+    return prepareCommand(sessionId, script.command);
+  }
+
+  throw new Error("Instruction DemonScript inconnue.");
+}
+
+// Confirmation d'une action
 app.post("/actions/confirm", async (req, res) => {
   const actionId = req.body?.actionId;
 
@@ -805,29 +829,24 @@ app.post("/actions/confirm", async (req, res) => {
       }
 
       reply = `Commande acceptée par Falix : ${pending.command}`;
-    }
-
-    else if (pending.type === "power") {
+    } else if (pending.type === "power") {
       await powerFalixServer(pending.signal);
 
-      reply = `Falix a accepté la demande : ${pending.signal}. Le changement d'état peut prendre quelques instants.`;
-    }
+      const labels = {
+        start: "démarrage",
+        stop: "arrêt",
+        restart: "redémarrage"
+      };
 
-    else if (pending.type === "write_file") {
+      reply = `Falix a accepté la demande de ${labels[pending.signal]}. Le changement d'état peut prendre quelques instants.`;
+    } else if (pending.type === "write_file") {
       await writeFalixFile(pending.filePath, pending.content);
-
       reply = `Le fichier ${pending.filePath} a été envoyé à Falix pour modification.`;
-    }
-
-    else {
+    } else {
       throw new Error("Type d'action inconnu.");
     }
 
-    return res.json({
-      success: true,
-      reply
-    });
-
+    return res.json({ success: true, reply });
   } catch (error) {
     console.error("Erreur action Falix :", error.message);
 
@@ -867,6 +886,205 @@ app.post("/actions/cancel", (req, res) => {
   });
 });
 
+// ================================
+// MOTEUR DEMONCODE : TEXTE VERS PNG
+// ================================
+
+// Lire et valider un document DemonCode
+function parseDemonCode(source) {
+  if (typeof source !== "string" || source.length > DEMONCODE_MAX_LENGTH) {
+    throw new Error("Code DemonCode invalide ou trop volumineux.");
+  }
+
+  const lines = source.trim().split(/\r?\n/);
+
+  const sizeMatch = lines[0]?.trim().match(
+    /^\{image-size\s+(\d+)x(\d+)px\}$/
+  );
+
+  if (!sizeMatch) {
+    throw new Error("Dimensions invalides. Exemple : {image-size 64x64px}");
+  }
+
+  const width = Number(sizeMatch[1]);
+  const height = Number(sizeMatch[2]);
+
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > DEMONCODE_MAX_WIDTH ||
+    height > DEMONCODE_MAX_HEIGHT
+  ) {
+    throw new Error(
+      `Les dimensions maximales sont ${DEMONCODE_MAX_WIDTH} × ${DEMONCODE_MAX_HEIGHT} pixels.`
+    );
+  }
+
+  const formatMatch = lines[1]?.trim().match(
+    /^\{format\s+(RGB|RGBA)\}$/
+  );
+
+  if (!formatMatch) {
+    throw new Error("Format manquant. Utilise {format RGB} ou {format RGBA}.");
+  }
+
+  const format = formatMatch[1];
+  const channels = format === "RGB" ? 3 : 4;
+  const pixelLines = lines.slice(2).filter(line => line.trim() !== "");
+
+  if (pixelLines.length !== height) {
+    throw new Error(
+      `Hauteur incorrecte : ${height} lignes attendues, ${pixelLines.length} trouvées.`
+    );
+  }
+
+  const pixels = [];
+
+  for (let y = 0; y < height; y++) {
+    const row = pixelLines[y].split(";").map(value => value.trim());
+
+    if (row.length !== width) {
+      throw new Error(
+        `Ligne ${y + 1} : ${width} pixels attendus, ${row.length} trouvés.`
+      );
+    }
+
+    for (let x = 0; x < width; x++) {
+      const values = row[x].split("-").map(value => {
+        if (!/^\d+$/.test(value)) return NaN;
+        return Number(value);
+      });
+
+      if (
+        values.length !== channels ||
+        values.some(value =>
+          !Number.isInteger(value) || value < 0 || value > 255
+        )
+      ) {
+        throw new Error(
+          `Couleur invalide à la ligne ${y + 1}, pixel ${x + 1}.`
+        );
+      }
+
+      pixels.push(values);
+    }
+  }
+
+  return { width, height, format, channels, pixels };
+}
+
+// Calculer le CRC32 nécessaire au format PNG
+const crcTable = new Uint32Array(256);
+
+for (let n = 0; n < 256; n++) {
+  let c = n;
+
+  for (let k = 0; k < 8; k++) {
+    c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  }
+
+  crcTable[n] = c >>> 0;
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Créer un bloc PNG
+function pngChunk(type, data) {
+  const typeBuffer = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+
+  const crcInput = Buffer.concat([typeBuffer, data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(crcInput), 0);
+
+  return Buffer.concat([length, typeBuffer, data, crc]);
+}
+
+// Encoder les pixels en véritable fichier PNG
+function encodeDemonCodePng(image) {
+  const { width, height, format, channels, pixels } = image;
+  const colorType = format === "RGB" ? 2 : 6;
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = colorType;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  // Chaque ligne PNG commence par un octet de filtre 0
+  const rowLength = 1 + width * channels;
+  const raw = Buffer.alloc(rowLength * height);
+
+  let pixelIndex = 0;
+
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * rowLength;
+    raw[rowStart] = 0;
+
+    for (let x = 0; x < width; x++) {
+      const pixel = pixels[pixelIndex++];
+      const offset = rowStart + 1 + x * channels;
+
+      for (let c = 0; c < channels; c++) {
+        raw[offset + c] = pixel[c];
+      }
+    }
+  }
+
+  const signature = Buffer.from([
+    137, 80, 78, 71, 13, 10, 26, 10
+  ]);
+
+  const ihdrChunk = pngChunk("IHDR", ihdr);
+  const idatChunk = pngChunk("IDAT", deflateSync(raw));
+  const iendChunk = pngChunk("IEND", Buffer.alloc(0));
+
+  return Buffer.concat([
+    signature,
+    ihdrChunk,
+    idatChunk,
+    iendChunk
+  ]);
+}
+
+// Route DemonCode protégée par la connexion
+app.post("/demoncode/render", (req, res) => {
+  try {
+    const code = req.body?.code;
+
+    const image = parseDemonCode(code);
+    const png = encodeDemonCodePng(image);
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader(
+      "Content-Disposition",
+      'inline; filename="demoncode-image.png"'
+    );
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.status(200).send(png);
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Statut de Demon City IA
 app.get("/status", (req, res) => {
   res.json({
@@ -874,11 +1092,10 @@ app.get("/status", (req, res) => {
     name: "Demon City IA",
     status: "online",
     aiConfigured: Boolean(process.env.GROQ_API_KEY),
-    falixConfigured: Boolean(
-      process.env.FALIX_API_KEY &&
-      (process.env.FALIX_SERVER_ID || "3574991")
-    ),
-    webSearchEnabled: true
+    falixConfigured: Boolean(process.env.FALIX_API_KEY),
+    webSearchEnabled: true,
+    demonScriptEnabled: true,
+    demonCodeEnabled: true
   });
 });
 
@@ -1111,6 +1328,29 @@ app.post("/chat", async (req, res) => {
       throw new Error("Groq n'a pas renvoyé de réponse.");
     }
 
+    // DemonScript : ne traiter que les marqueurs seuls
+    const demonScript = parseDemonScript(assistantMessage.content);
+
+    if (demonScript) {
+      const pendingAction = prepareDemonScript(req.sessionId, demonScript);
+
+      const replies = {
+        start: "Je te propose de démarrer le serveur Falix.",
+        stop: "Je te propose d'arrêter le serveur Falix.",
+        restart: "Je te propose de redémarrer le serveur Falix."
+      };
+
+      const reply = demonScript.type === "command"
+        ? `Je te propose d'envoyer cette commande Minecraft : ${demonScript.command}`
+        : replies[demonScript.signal];
+
+      return res.json({
+        success: true,
+        reply,
+        pendingAction
+      });
+    }
+
     let pendingAction = null;
 
     // Traiter les fonctions demandées par Groq
@@ -1129,16 +1369,12 @@ app.post("/chat", async (req, res) => {
               success: true,
               server: await getFalixStatus()
             });
-          }
-
-          else if (functionName === "get_console_log") {
+          } else if (functionName === "get_console_log") {
             toolResult = JSON.stringify({
               success: true,
               console: await getFalixLogs()
             });
-          }
-
-          else if (functionName === "prepare_server_command") {
+          } else if (functionName === "prepare_server_command") {
             const prepared = prepareCommand(req.sessionId, args.command);
             pendingAction = prepared;
 
@@ -1147,9 +1383,7 @@ app.post("/chat", async (req, res) => {
               confirmationRequired: true,
               command: prepared.command
             });
-          }
-
-          else if (functionName === "prepare_server_power") {
+          } else if (functionName === "prepare_server_power") {
             const prepared = preparePower(req.sessionId, args.signal);
             pendingAction = prepared;
 
@@ -1158,27 +1392,21 @@ app.post("/chat", async (req, res) => {
               confirmationRequired: true,
               action: args.signal
             });
-          }
-
-          else if (functionName === "list_server_files") {
+          } else if (functionName === "list_server_files") {
             const files = await listFalixFiles(args.directory || "/");
 
             toolResult = JSON.stringify({
               success: true,
               files
             });
-          }
-
-          else if (functionName === "read_server_file") {
+          } else if (functionName === "read_server_file") {
             const file = await readFalixFile(args.path);
 
             toolResult = JSON.stringify({
               success: true,
               file
             });
-          }
-
-          else if (functionName === "prepare_file_write") {
+          } else if (functionName === "prepare_file_write") {
             const prepared = prepareFileWrite(
               req.sessionId,
               args.path,
@@ -1192,15 +1420,12 @@ app.post("/chat", async (req, res) => {
               confirmationRequired: true,
               path: args.path
             });
-          }
-
-          else {
+          } else {
             toolResult = JSON.stringify({
               success: false,
               error: "Fonction non autorisée."
             });
           }
-
         } catch (error) {
           toolResult = JSON.stringify({
             success: false,
@@ -1238,7 +1463,6 @@ app.post("/chat", async (req, res) => {
       reply: assistantMessage.content,
       pendingAction: null
     });
-
   } catch (error) {
     console.error("Erreur serveur :", error.message);
 
@@ -1249,6 +1473,23 @@ app.post("/chat", async (req, res) => {
   }
 });
 
+// Nettoyage périodique des actions expirées
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [actionId, action] of pendingActions) {
+    if (action.expiresAt < now) {
+      pendingActions.delete(actionId);
+    }
+  }
+
+  for (const [id, session] of sessions) {
+    if (session.expiresAt < now) {
+      sessions.delete(id);
+    }
+  }
+}, 60 * 1000).unref();
+
 // Démarrer Demon City IA
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Diagnostic sécurité :", {
@@ -1258,4 +1499,6 @@ app.listen(PORT, "0.0.0.0", () => {
   });
 
   console.log("Demon City IA démarré sur le port", PORT);
+  console.log("DemonScript activé.");
+  console.log("DemonCode activé.");
 });
