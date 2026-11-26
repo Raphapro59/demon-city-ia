@@ -4,24 +4,18 @@ import express from "express";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Autoriser les requêtes JSON
 app.use(express.json({ limit: "20kb" }));
-
-// Afficher l'interface Demon City IA
 app.use(express.static("public"));
 
-// Configuration de l'assistant
+// Instructions de Demon City IA
 const SYSTEM_PROMPT = `
 Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
-Tu parles français, avec un ton naturel et sympathique.
-Tu aides les joueurs et les administrateurs pour Minecraft Bedrock,
-la gestion du serveur et les projets Demon City.
-
-Tu ne prétends jamais avoir effectué une action si elle n'a pas réellement été exécutée.
-La connexion Falix existe, mais les commandes de gestion ne sont pas encore toutes implémentées.
+Tu parles français, naturellement et clairement.
+Tu aides à gérer le serveur Minecraft Bedrock et les projets Demon City.
+Tu ne prétends jamais avoir effectué une action qui n'a pas été exécutée.
 `;
 
-// Vérifier la configuration
+// Statut général de Demon City IA
 app.get("/status", (req, res) => {
   res.json({
     success: true,
@@ -32,14 +26,14 @@ app.get("/status", (req, res) => {
   });
 });
 
-// Vérifier la connexion Falix
+// Vérifier la connexion au compte Falix
 app.get("/falix-test", async (req, res) => {
   const apiKey = process.env.FALIX_API_KEY;
 
   if (!apiKey) {
     return res.status(500).json({
       success: false,
-      error: "Clé API Falix manquante dans Render"
+      error: "Clé API Falix manquante"
     });
   }
 
@@ -58,14 +52,14 @@ app.get("/falix-test", async (req, res) => {
     if (!response.ok) {
       return res.status(response.status).json({
         success: false,
-        error: "Falix a refusé la connexion"
+        error: result.error?.message || "Erreur Falix"
       });
     }
 
     res.json({
       success: true,
       message: "Demon City IA est connecté à Falix !",
-      account: result.username || result.name || "Connecté"
+      account: result.data?.account?.username || "Connecté"
     });
 
   } catch (error) {
@@ -78,18 +72,76 @@ app.get("/falix-test", async (req, res) => {
   }
 });
 
-// Envoyer un message à Groq
+// Lire le véritable statut du serveur Minecraft
+app.get("/falix-status", async (req, res) => {
+  const apiKey = process.env.FALIX_API_KEY;
+  const serverId = process.env.FALIX_SERVER_ID;
+
+  if (!apiKey || !serverId) {
+    return res.status(500).json({
+      success: false,
+      error: "Configuration Falix incomplète"
+    });
+  }
+
+  try {
+    const response = await fetch(
+      `https://client.falixnodes.net/api/v2/servers/${encodeURIComponent(serverId)}/console/status`,
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`
+        },
+        signal: AbortSignal.timeout(15000)
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      console.error("Erreur statut Falix :", response.status);
+
+      return res.status(response.status).json({
+        success: false,
+        error: result.error?.message || "Falix a refusé la demande"
+      });
+    }
+
+    // Falix renvoie les informations dans result.data
+    const server = result.data;
+
+    res.json({
+      success: true,
+      server: {
+        id: server.server_id,
+        name: server.server_name,
+        status: server.status,
+        message: server.message,
+        nodeReady: server.node_ready,
+        resources: server.resources || null
+      }
+    });
+
+  } catch (error) {
+    console.error("Erreur statut :", error.message);
+
+    res.status(500).json({
+      success: false,
+      error: "Impossible de récupérer le statut du serveur"
+    });
+  }
+});
+
+// Envoyer un message au moteur Groq
 app.post("/chat", async (req, res) => {
   const apiKey = process.env.GROQ_API_KEY;
+  const message = req.body?.message;
 
   if (!apiKey) {
     return res.status(500).json({
       success: false,
-      error: "Clé API Groq manquante dans Render"
+      error: "Clé API Groq manquante"
     });
   }
-
-  const message = req.body?.message;
 
   if (typeof message !== "string" || !message.trim()) {
     return res.status(400).json({
@@ -117,29 +169,20 @@ app.post("/chat", async (req, res) => {
         body: JSON.stringify({
           model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
           messages: [
-            {
-              role: "system",
-              content: SYSTEM_PROMPT
-            },
-            {
-              role: "user",
-              content: message.trim()
-            }
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: message.trim() }
           ],
           temperature: 0.7,
           max_tokens: 1000
-        })
+        }),
+        signal: AbortSignal.timeout(30000)
       }
     );
 
     const result = await response.json();
 
     if (!response.ok) {
-      console.error(
-        "Erreur Groq :",
-        response.status,
-        result.error?.message || "Erreur inconnue"
-      );
+      console.error("Erreur Groq :", response.status);
 
       return res.status(502).json({
         success: false,
@@ -171,7 +214,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// Démarrer le serveur
+// Démarrer Demon City IA
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Demon City IA démarré sur le port ${PORT}`);
 });
