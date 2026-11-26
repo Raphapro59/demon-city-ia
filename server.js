@@ -274,8 +274,8 @@ Tu connais Minecraft Bedrock et le projet Demon City.
 Tu ne prétends jamais avoir effectué une action non réalisée.
 
 OUTILS :
-- get_server_status : consulter le statut réel du serveur.
-- get_console_log : consulter les dernières lignes de console.
+- get_server_status : consulter le statut réel du serveur Falix.
+- get_console_log : lire les dernières lignes de la console Falix en direct via WebSocket.
 - prepare_server_command : préparer une commande Minecraft.
 - prepare_server_power : préparer start, stop ou restart.
 - list_server_files : explorer les dossiers Falix.
@@ -330,7 +330,6 @@ function getFalixActionUrl(result) {
 
     try {
       const url = new URL(candidate);
-
       const officialHost =
         url.hostname === "falixnodes.net" ||
         url.hostname.endsWith(".falixnodes.net");
@@ -402,45 +401,154 @@ async function getFalixStatus() {
   };
 }
 
-// Logs de la console Falix
+// Lire la console Falix en direct grâce au WebSocket
 async function getFalixLogs() {
-  const { apiKey, serverId } = getFalixConfig();
-
-  // Appel direct à l'endpoint de logs Falix
-  const response = await fetch(
-    `https://client.falixnodes.net/api/v2/servers/${encodeURIComponent(serverId)}/console/log`,
-    {
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      },
-      signal: AbortSignal.timeout(20000)
-    }
-  );
-
-  // Lire la réponse JSON
-  const result = await response.json().catch(() => ({}));
-
-  // Gérer les erreurs HTTP
-  if (!response.ok) {
-    const message =
-      result?.error?.message ||
-      result?.message ||
-      `Erreur Falix (${response.status})`;
-
-    const error = new Error(message);
-    error.status = response.status;
-    error.actionUrl = getFalixActionUrl(result);
-    throw error;
+  // Node.js 22 ou supérieur est nécessaire
+  if (typeof globalThis.WebSocket !== "function") {
+    throw new Error(
+      "WebSocket indisponible. Demon City IA nécessite Node.js 22 ou supérieur."
+    );
   }
 
-  // Falix peut renvoyer les données dans result.data
-  const data = result?.data ?? result;
+  // Demander un token temporaire à Falix
+  const session = await falixRequest(
+    serverEndpoint("/console/token"),
+    { method: "POST" }
+  );
 
-  return {
-    source: data?.source ?? null,
-    truncated: Boolean(data?.truncated),
-    lines: Array.isArray(data?.lines) ? data.lines : []
-  };
+  if (
+    !session ||
+    typeof session.socket !== "string" ||
+    typeof session.token !== "string"
+  ) {
+    throw new Error("Falix n'a pas fourni de session WebSocket valide.");
+  }
+
+  // Vérifier que l'adresse du WebSocket est sécurisée
+  const socketUrl = new URL(session.socket);
+
+  if (socketUrl.protocol !== "wss:") {
+    throw new Error("Adresse WebSocket Falix non sécurisée.");
+  }
+
+  const ws = new globalThis.WebSocket(socketUrl.href);
+  const lines = [];
+
+  return await new Promise((resolve, reject) => {
+    let authenticated = false;
+    let finished = false;
+    let collectionTimer = null;
+
+    // Fermer proprement la connexion
+    function finish(error = null) {
+      if (finished) return;
+      finished = true;
+
+      clearTimeout(connectionTimer);
+
+      if (collectionTimer) {
+        clearTimeout(collectionTimer);
+      }
+
+      try {
+        ws.close();
+      } catch {
+        // La connexion est peut-être déjà fermée
+      }
+
+      if (error) {
+        reject(error);
+      } else {
+        resolve({
+          source: "websocket",
+          live: true,
+          truncated: false,
+          lines: lines.slice(-200)
+        });
+      }
+    }
+
+    // Éviter une connexion bloquée
+    const connectionTimer = setTimeout(() => {
+      finish(
+        new Error("Délai dépassé lors de la connexion à la console Falix.")
+      );
+    }, 12000);
+
+    // Authentification WebSocket
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({
+        event: "auth",
+        args: [session.token]
+      }));
+    });
+
+    // Réception des messages de Falix
+    ws.addEventListener("message", (event) => {
+      let packet;
+
+      try {
+        packet = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+
+      const eventName = packet?.event;
+      const args = Array.isArray(packet?.args) ? packet.args : [];
+
+      // Authentification réussie
+      if (eventName === "auth success" && !authenticated) {
+        authenticated = true;
+
+        // Demander les dernières lignes de console
+        ws.send(JSON.stringify({
+          event: "send logs",
+          args: []
+        }));
+
+        // Laisser le temps aux lignes d'arriver
+        collectionTimer = setTimeout(() => finish(), 1800);
+        return;
+      }
+
+      // Token refusé
+      if (eventName === "jwt error") {
+        finish(new Error("Falix a refusé le token WebSocket."));
+        return;
+      }
+
+      // Récupérer les lignes de console
+      if (
+        eventName === "console output" &&
+        typeof args[0] === "string"
+      ) {
+        lines.push(args[0]);
+
+        // Garder au maximum 500 lignes en mémoire
+        if (lines.length > 500) {
+          lines.shift();
+        }
+      }
+    });
+
+    // Erreur WebSocket
+    ws.addEventListener("error", () => {
+      finish(
+        new Error("Impossible de communiquer avec le WebSocket Falix.")
+      );
+    });
+
+    // Fermeture de la connexion
+    ws.addEventListener("close", () => {
+      if (authenticated) {
+        finish();
+      } else {
+        finish(
+          new Error("Falix a fermé la connexion avant l'authentification.")
+        );
+      }
+    });
+  });
 }
 
 // Envoyer une commande Minecraft
@@ -805,13 +913,14 @@ app.get("/falix-status", async (req, res) => {
   }
 });
 
-// Console Falix
+// Console Falix en direct
 app.get("/falix-console", async (req, res) => {
   try {
     const logs = await getFalixLogs();
     res.json({ success: true, console: logs });
   } catch (error) {
     console.error("Erreur console Falix :", error.message);
+
     res.status(error.status || 500).json({
       success: false,
       error: error.message
@@ -838,7 +947,7 @@ const availableTools = [
     type: "function",
     function: {
       name: "get_console_log",
-      description: "Lire les dernières lignes de la console Minecraft.",
+      description: "Lire les dernières lignes de la console Falix en direct via WebSocket.",
       parameters: {
         type: "object",
         properties: {},
