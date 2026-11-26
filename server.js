@@ -27,7 +27,7 @@ function securityConfigured() {
   );
 }
 
-// Générer une signature sécurisée
+// Générer une signature sécurisée pour les sessions
 function signSession(id) {
   return crypto
     .createHmac("sha256", process.env.SESSION_SECRET)
@@ -35,9 +35,8 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Lire et vérifier le cookie de session
+// Récupérer et vérifier la session
 function getSession(req) {
-  // Ne jamais utiliser la signature si la configuration est incomplète
   if (!securityConfigured()) return null;
 
   const cookies = req.headers.cookie || "";
@@ -135,7 +134,9 @@ form.addEventListener("submit", async event => {
 
     const data = await response.json();
 
-    if (!response.ok) throw new Error(data.error || "Connexion refusée.");
+    if (!response.ok) {
+      throw new Error(data.error || "Connexion refusée.");
+    }
 
     location.href = "/";
   } catch (err) {
@@ -148,13 +149,13 @@ form.addEventListener("submit", async event => {
 </body>
 </html>`;
 
-// Afficher l'écran de connexion
+// Afficher la page de connexion
 app.get("/login", (req, res) => {
   if (getSession(req)) return res.redirect("/");
   res.type("html").send(loginPage);
 });
 
-// Vérifier l'état de la configuration et de la session
+// Vérifier l'état de la session
 app.get("/auth/status", (req, res) => {
   res.json({
     authenticated: Boolean(getSession(req)),
@@ -180,10 +181,12 @@ app.post("/auth/login", (req, res) => {
   }
 
   if (typeof submitted !== "string" || submitted.length > 200) {
-    return res.status(400).json({ error: "Mot de passe invalide." });
+    return res.status(400).json({
+      error: "Mot de passe invalide."
+    });
   }
 
-  // Limiter les tentatives par adresse IP
+  // Limiter les tentatives de connexion
   const ip = req.ip || "unknown";
   const attempts = loginAttempts.get(ip) || {
     count: 0,
@@ -201,7 +204,7 @@ app.post("/auth/login", (req, res) => {
     });
   }
 
-  // Comparer les empreintes des deux mots de passe
+  // Comparer les empreintes des mots de passe
   const expected = crypto.createHash("sha256").update(password).digest();
   const received = crypto.createHash("sha256").update(submitted).digest();
 
@@ -272,7 +275,7 @@ app.use(express.static(path.join(__dirname, "public")));
 const SYSTEM_PROMPT = `
 Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
 
-Tu parles français, naturellement, clairement et de manière conviviale.
+Tu parles français naturellement, clairement et de manière conviviale.
 
 Tu aides à gérer le serveur Minecraft Bedrock et les projets Demon City.
 
@@ -280,25 +283,35 @@ Ne te présente jamais spontanément.
 Ne commence pas chaque réponse par "Je suis Demon City IA".
 Présente-toi uniquement si l'utilisateur te demande explicitement qui tu es.
 
-Quand l'utilisateur parle de Demon City, réponds directement à sa demande.
-Évite les répétitions et les introductions inutiles.
+Réponds directement aux demandes et évite les répétitions.
 
-Tu ne prétends jamais avoir effectué une action qui n'a pas réellement été exécutée.
-Tu ne prétends pas avoir accès aux fichiers, à la console ou au serveur sans outil réellement disponible.
+Tu disposes d'une fonction appelée get_server_status.
+Elle permet de consulter le véritable statut du serveur Demon City RP sur Falix.
+
+Quand l'utilisateur demande si le serveur est en ligne, son statut,
+son état ou ses ressources, utilise cette fonction.
+
+Base tes réponses sur les données réellement retournées par Falix.
+Si la consultation échoue, explique que tu n'as pas pu vérifier le statut.
+
+Ne prétends jamais avoir effectué une action qui n'a pas été exécutée.
+Ne prétends jamais avoir accès à des fonctions qui ne sont pas disponibles.
 `;
 
-// Statut général
+// Statut général de Demon City IA
 app.get("/status", (req, res) => {
   res.json({
     success: true,
     name: "Demon City IA",
     status: "online",
     aiConfigured: Boolean(process.env.GROQ_API_KEY),
-    falixConfigured: Boolean(process.env.FALIX_API_KEY)
+    falixConfigured: Boolean(
+      process.env.FALIX_API_KEY && process.env.FALIX_SERVER_ID
+    )
   });
 });
 
-// Vérifier la connexion Falix
+// Vérifier la connexion au compte Falix
 app.get("/falix-test", async (req, res) => {
   const apiKey = process.env.FALIX_API_KEY;
 
@@ -313,7 +326,9 @@ app.get("/falix-test", async (req, res) => {
     const response = await fetch(
       "https://client.falixnodes.net/api/v2/me",
       {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: {
+          Authorization: `Bearer ${apiKey}`
+        },
         signal: AbortSignal.timeout(15000)
       }
     );
@@ -334,6 +349,7 @@ app.get("/falix-test", async (req, res) => {
     });
   } catch (error) {
     console.error("Erreur Falix :", error.message);
+
     res.status(500).json({
       success: false,
       error: "Impossible de contacter Falix"
@@ -341,59 +357,65 @@ app.get("/falix-test", async (req, res) => {
   }
 });
 
-// Lire le statut du serveur Minecraft
-app.get("/falix-status", async (req, res) => {
+// Fonction interne : récupérer le statut réel du serveur Falix
+async function getFalixStatus() {
   const apiKey = process.env.FALIX_API_KEY;
   const serverId = process.env.FALIX_SERVER_ID;
 
   if (!apiKey || !serverId) {
-    return res.status(500).json({
-      success: false,
-      error: "Configuration Falix incomplète"
-    });
+    throw new Error("Configuration Falix incomplète.");
   }
 
-  try {
-    const response = await fetch(
-      `https://client.falixnodes.net/api/v2/servers/${encodeURIComponent(serverId)}/console/status`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(15000)
-      }
-    );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        success: false,
-        error: result.error?.message || "Falix a refusé la demande"
-      });
+  const response = await fetch(
+    `https://client.falixnodes.net/api/v2/servers/${encodeURIComponent(serverId)}/console/status`,
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      },
+      signal: AbortSignal.timeout(15000)
     }
+  );
 
-    const server = result.data;
+  const result = await response.json();
+
+  if (!response.ok || !result.data) {
+    throw new Error(
+      result.error?.message || "Impossible de lire le statut Falix."
+    );
+  }
+
+  const server = result.data;
+
+  return {
+    id: server.server_id,
+    name: server.server_name,
+    status: server.status,
+    message: server.message,
+    nodeReady: server.node_ready,
+    resources: server.resources || null
+  };
+}
+
+// Route pour consulter le statut depuis le navigateur
+app.get("/falix-status", async (req, res) => {
+  try {
+    const server = await getFalixStatus();
 
     res.json({
       success: true,
-      server: {
-        id: server.server_id,
-        name: server.server_name,
-        status: server.status,
-        message: server.message,
-        nodeReady: server.node_ready,
-        resources: server.resources || null
-      }
+      server
     });
   } catch (error) {
-    console.error("Erreur statut :", error.message);
+    console.error("Erreur statut Falix :", error.message);
+
     res.status(500).json({
       success: false,
-      error: "Impossible de récupérer le statut du serveur"
+      error: error.message
     });
   }
 });
 
-// Envoyer un message à Groq
+// Envoyer un message à Groq avec accès contrôlé à Falix
 app.post("/chat", async (req, res) => {
   const apiKey = process.env.GROQ_API_KEY;
   const message = req.body?.message;
@@ -419,7 +441,31 @@ app.post("/chat", async (req, res) => {
     });
   }
 
+  // Seule cette fonction Falix est autorisée pour le moment
+  const availableTools = [
+    {
+      type: "function",
+      function: {
+        name: "get_server_status",
+        description:
+          "Consulter le véritable statut du serveur Minecraft Demon City RP sur Falix. Utiliser quand l'utilisateur demande si le serveur est en ligne, son état ou ses ressources.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false
+        }
+      }
+    }
+  ];
+
   try {
+    const messages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: message.trim() }
+    ];
+
+    // Première demande à Groq
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {
@@ -430,10 +476,9 @@ app.post("/chat", async (req, res) => {
         },
         body: JSON.stringify({
           model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: message.trim() }
-          ],
+          messages,
+          tools: availableTools,
+          tool_choice: "auto",
           temperature: 0.7,
           max_tokens: 1000
         }),
@@ -444,13 +489,106 @@ app.post("/chat", async (req, res) => {
     const result = await response.json();
 
     if (!response.ok) {
+      console.error("Erreur Groq :", response.status, result.error);
+
       return res.status(502).json({
         success: false,
         error: result.error?.message || "Erreur du moteur Groq"
       });
     }
 
-    const answer = result.choices?.[0]?.message?.content;
+    const assistantMessage = result.choices?.[0]?.message;
+
+    if (!assistantMessage) {
+      return res.status(502).json({
+        success: false,
+        error: "Groq n'a pas renvoyé de réponse"
+      });
+    }
+
+    // Exécuter uniquement les fonctions autorisées
+    if (assistantMessage.tool_calls?.length) {
+      messages.push(assistantMessage);
+
+      for (const toolCall of assistantMessage.tool_calls) {
+        let toolResult;
+
+        if (toolCall.function?.name === "get_server_status") {
+          try {
+            const status = await getFalixStatus();
+
+            toolResult = JSON.stringify({
+              success: true,
+              server: status
+            });
+          } catch (error) {
+            toolResult = JSON.stringify({
+              success: false,
+              error: error.message
+            });
+          }
+        } else {
+          toolResult = JSON.stringify({
+            success: false,
+            error: "Fonction non autorisée."
+          });
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: toolResult
+        });
+      }
+
+      // Demander à Groq de formuler une réponse avec les données Falix
+      const finalResponse = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
+            messages,
+            temperature: 0.7,
+            max_tokens: 1000
+          }),
+          signal: AbortSignal.timeout(30000)
+        }
+      );
+
+      const finalResult = await finalResponse.json();
+
+      if (!finalResponse.ok) {
+        console.error("Erreur réponse finale Groq :", finalResult.error);
+
+        return res.status(502).json({
+          success: false,
+          error: "Erreur lors de la réponse finale de Groq."
+        });
+      }
+
+      const finalAnswer =
+        finalResult.choices?.[0]?.message?.content;
+
+      if (!finalAnswer) {
+        return res.status(502).json({
+          success: false,
+          error: "Réponse finale vide."
+        });
+      }
+
+      return res.json({
+        success: true,
+        reply: finalAnswer
+      });
+    }
+
+    // Réponse normale sans appel à Falix
+    const answer = assistantMessage.content;
 
     if (!answer) {
       return res.status(502).json({
@@ -459,9 +597,14 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    res.json({ success: true, reply: answer });
+    res.json({
+      success: true,
+      reply: answer
+    });
+
   } catch (error) {
     console.error("Erreur serveur :", error.message);
+
     res.status(500).json({
       success: false,
       error: "Impossible de contacter le moteur IA"
@@ -471,7 +614,6 @@ app.post("/chat", async (req, res) => {
 
 // Démarrer Demon City IA
 app.listen(PORT, "0.0.0.0", () => {
-  // Afficher uniquement les informations de diagnostic, jamais les secrets
   console.log("Diagnostic sécurité :", {
     sitePasswordPresent: Boolean(process.env.SITE_PASSWORD),
     sessionSecretPresent: Boolean(process.env.SESSION_SECRET),
