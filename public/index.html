@@ -89,9 +89,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .new-chat:hover{background:#3a2633;border-color:var(--accent)}
 .new-chat span:first-child{font-size:20px;line-height:1}
 
-.search-box{
-  position:relative;
-}
+.search-box{position:relative}
 .search-box input{
   width:100%;
   padding:10px 12px 10px 35px;
@@ -170,7 +168,6 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .history-item:hover .history-menu-button,
 .history-menu-button:focus{opacity:1}
 .history-menu-button:hover{background:#493441;color:white}
-
 .history-context{
   position:absolute;
   z-index:20;
@@ -195,7 +192,6 @@ button:disabled{opacity:.5;cursor:not-allowed}
 }
 .history-context button:hover{background:#44303e}
 .history-context button.danger{color:#ff91a9}
-
 .sidebar-bottom{
   border-top:1px solid var(--border);
   padding-top:12px;
@@ -500,6 +496,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   padding:15px;
   overflow-x:auto;
   background:#111014;
+  tab-size:2;
 }
 .code-block pre code{
   display:block;
@@ -679,7 +676,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   flex:1;
   min-width:0;
   min-height:28px;
-  max-height:150px;
+  max-height:180px;
   resize:none;
   padding:5px 0;
   border:0;
@@ -706,10 +703,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
 /* EDIT MESSAGE */
 
-.edit-panel{
-  width:min(100%,650px);
-  margin-top:8px;
-}
+.edit-panel{width:min(100%,650px);margin-top:8px}
 .edit-panel textarea{
   width:100%;
   min-height:100px;
@@ -870,7 +864,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
       <textarea id="prompt" rows="1" placeholder="Message à Demon City IA…" aria-label="Votre message"></textarea>
       <button class="send" id="sendBtn" type="submit" aria-label="Envoyer">↑</button>
     </form>
-    <div class="disclaimer">Demon City IA peut faire des erreurs. Vérifie les actions importantes.</div>
+    <div class="disclaimer">Entrée : nouvelle ligne · Ctrl + Entrée : envoyer</div>
   </div>
 </main>
 
@@ -893,26 +887,23 @@ const STORAGE_KEY = "demon_city_ia_local_chats_v1";
 
 let chats = [];
 let activeChatId = null;
-let activeSection = "Discussion";
 let sending = false;
 let openMenuId = null;
+let longPressTimer = null;
 
-if (window.marked) {
+if(window.marked){
   marked.setOptions({gfm:true,breaks:true});
 }
 
-/* LOCAL HISTORY
-   Cette version stocke temporairement les discussions sur cet appareil.
-   La synchronisation serveur sera ajoutée dans une prochaine étape.
-*/
+/* LOCAL HISTORY */
 
 function loadChats(){
   try{
-    const saved = localStorage.getItem(STORAGE_KEY);
-    chats = saved ? JSON.parse(saved) : [];
-    if(!Array.isArray(chats)) chats = [];
+    const saved=localStorage.getItem(STORAGE_KEY);
+    chats=saved?JSON.parse(saved):[];
+    if(!Array.isArray(chats)) chats=[];
   }catch{
-    chats = [];
+    chats=[];
   }
 }
 
@@ -931,11 +922,42 @@ function makeId(){
 }
 
 function getActiveChat(){
-  return chats.find(chat=>chat.id===activeChatId) || null;
+  return chats.find(chat=>chat.id===activeChatId)||null;
+}
+
+function setPageTitle(title){
+  pageTitle.textContent=title||"Nouvelle discussion";
+}
+
+/* AUTOMATIC TITLES */
+
+function generateTitle(text){
+  let cleaned=String(text||"")
+    .replace(/```[\s\S]*?```/g," ")
+    .replace(/`([^`]+)`/g,"$1")
+    .replace(/https?:\/\/\S+/g,"")
+    .replace(/[#*_~]/g,"")
+    .replace(/\s+/g," ")
+    .trim();
+
+  if(!cleaned) return "Nouvelle discussion";
+
+  cleaned=cleaned.replace(/[.!?]+$/,"");
+
+  const words=cleaned.split(" ");
+  if(words.length>7){
+    cleaned=words.slice(0,7).join(" ");
+  }
+
+  if(cleaned.length>45){
+    cleaned=cleaned.slice(0,42).trim()+"…";
+  }
+
+  return cleaned.charAt(0).toUpperCase()+cleaned.slice(1);
 }
 
 function createChat(){
-  const chat = {
+  const chat={
     id:makeId(),
     title:"Nouvelle discussion",
     messages:[],
@@ -945,7 +967,7 @@ function createChat(){
   };
 
   chats.unshift(chat);
-  activeChatId = chat.id;
+  activeChatId=chat.id;
   saveChats();
   renderHistory();
   renderActiveChat();
@@ -954,50 +976,38 @@ function createChat(){
   promptBox.focus();
 }
 
-function setPageTitle(title){
-  pageTitle.textContent = title || "Nouvelle discussion";
-}
-
-function generateTitle(text){
-  const cleaned = String(text || "")
-    .replace(/```[\s\S]*?```/g,"[code]")
-    .replace(/\s+/g," ")
-    .trim();
-
-  if(!cleaned) return "Nouvelle discussion";
-  return cleaned.length > 38
-    ? cleaned.slice(0,38).trim()+"…"
-    : cleaned;
-}
-
 function updateChat(chat){
-  chat.updatedAt = Date.now();
+  chat.updatedAt=Date.now();
+
   chats.sort((a,b)=>{
-    if(a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if(a.pinned!==b.pinned) return a.pinned?-1:1;
     return b.updatedAt-a.updatedAt;
   });
+
   saveChats();
   renderHistory();
+
+  if(chat.id===activeChatId) setPageTitle(chat.title);
 }
 
-/* HISTORY UI */
+/* HISTORY */
 
 function renderHistory(){
-  const pinned = document.getElementById("pinnedHistory");
-  const normal = document.getElementById("normalHistory");
-  const query = document.getElementById("historySearch").value.trim().toLowerCase();
+  const pinned=document.getElementById("pinnedHistory");
+  const normal=document.getElementById("normalHistory");
+  const query=document.getElementById("historySearch").value.trim().toLowerCase();
 
   pinned.replaceChildren();
   normal.replaceChildren();
 
-  const filtered = chats.filter(chat=>{
-    if(!query) return true;
-    return chat.title.toLowerCase().includes(query) ||
-      chat.messages.some(message=>String(message.text || "").toLowerCase().includes(query));
+  const filtered=chats.filter(chat=>{
+    return !query ||
+      chat.title.toLowerCase().includes(query) ||
+      chat.messages.some(message=>String(message.text||"").toLowerCase().includes(query));
   });
 
-  const pinnedChats = filtered.filter(chat=>chat.pinned);
-  const normalChats = filtered.filter(chat=>!chat.pinned);
+  const pinnedChats=filtered.filter(chat=>chat.pinned);
+  const normalChats=filtered.filter(chat=>!chat.pinned);
 
   if(!pinnedChats.length){
     pinned.innerHTML='<div class="history-empty">Aucune discussion épinglée.</div>';
@@ -1005,7 +1015,7 @@ function renderHistory(){
 
   if(!normalChats.length){
     normal.innerHTML='<div class="history-empty">'+
-      (query ? "Aucun résultat trouvé." : "Tes nouvelles discussions apparaîtront ici.")+
+      (query?"Aucun résultat trouvé.":"Tes nouvelles discussions apparaîtront ici.")+
       '</div>';
   }
 
@@ -1014,44 +1024,45 @@ function renderHistory(){
 }
 
 function createHistoryItem(chat){
-  const item = document.createElement("div");
-  item.className = "history-item"+(chat.id===activeChatId ? " active" : "");
+  const item=document.createElement("div");
+  item.className="history-item"+(chat.id===activeChatId?" active":"");
 
-  const select = document.createElement("button");
-  select.className = "history-select";
-  select.type = "button";
-  select.textContent = chat.title;
-  select.title = chat.title;
+  const select=document.createElement("button");
+  select.className="history-select";
+  select.type="button";
+  select.textContent=chat.title;
+  select.title=chat.title;
   select.addEventListener("click",()=>openChat(chat.id));
 
-  const menuButton = document.createElement("button");
-  menuButton.className = "history-menu-button";
-  menuButton.type = "button";
-  menuButton.textContent = "•••";
+  const menuButton=document.createElement("button");
+  menuButton.className="history-menu-button";
+  menuButton.type="button";
+  menuButton.textContent="•••";
   menuButton.setAttribute("aria-label","Options de la discussion");
+
   menuButton.addEventListener("click",event=>{
     event.stopPropagation();
-    openMenuId = openMenuId===chat.id ? null : chat.id;
+    openMenuId=openMenuId===chat.id?null:chat.id;
     renderHistory();
   });
 
   item.append(select,menuButton);
 
   if(openMenuId===chat.id){
-    const menu = document.createElement("div");
-    menu.className = "history-context";
+    const menu=document.createElement("div");
+    menu.className="history-context";
 
-    const rename = document.createElement("button");
-    rename.textContent = "Renommer";
+    const rename=document.createElement("button");
+    rename.textContent="Renommer";
     rename.addEventListener("click",()=>renameChat(chat.id));
 
-    const pin = document.createElement("button");
-    pin.textContent = chat.pinned ? "Désépingler" : "Épingler";
+    const pin=document.createElement("button");
+    pin.textContent=chat.pinned?"Désépingler":"Épingler";
     pin.addEventListener("click",()=>togglePin(chat.id));
 
-    const remove = document.createElement("button");
-    remove.className = "danger";
-    remove.textContent = "Supprimer";
+    const remove=document.createElement("button");
+    remove.className="danger";
+    remove.textContent="Supprimer";
     remove.addEventListener("click",()=>deleteChat(chat.id));
 
     menu.append(rename,pin,remove);
@@ -1062,57 +1073,52 @@ function createHistoryItem(chat){
 }
 
 function openChat(id){
-  const chat = chats.find(item=>item.id===id);
+  const chat=chats.find(item=>item.id===id);
   if(!chat) return;
 
-  activeChatId = id;
-  openMenuId = null;
-  activeSection = "Discussion";
+  activeChatId=id;
+  openMenuId=null;
   setPageTitle(chat.title);
   renderHistory();
   renderActiveChat();
-  setNavigationActive("Discussion");
   closeMobileMenu();
 }
 
 function renameChat(id){
-  const chat = chats.find(item=>item.id===id);
+  const chat=chats.find(item=>item.id===id);
   if(!chat) return;
 
-  const title = window.prompt("Nouveau nom de la discussion :",chat.title);
+  const title=window.prompt("Nouveau nom de la discussion :",chat.title);
   if(title===null) return;
 
-  const cleaned = title.trim().slice(0,80);
+  const cleaned=title.trim().slice(0,80);
   if(!cleaned) return;
 
-  chat.title = cleaned;
+  chat.title=cleaned;
+  openMenuId=null;
   updateChat(chat);
-
-  if(activeChatId===id) setPageTitle(cleaned);
-  openMenuId = null;
-  renderHistory();
 }
 
 function togglePin(id){
-  const chat = chats.find(item=>item.id===id);
+  const chat=chats.find(item=>item.id===id);
   if(!chat) return;
 
-  chat.pinned = !chat.pinned;
-  openMenuId = null;
+  chat.pinned=!chat.pinned;
+  openMenuId=null;
   updateChat(chat);
 }
 
 function deleteChat(id){
-  const chat = chats.find(item=>item.id===id);
+  const chat=chats.find(item=>item.id===id);
   if(!chat) return;
 
   if(!window.confirm("Supprimer définitivement cette discussion sur cet appareil ?")) return;
 
-  chats = chats.filter(item=>item.id!==id);
-  openMenuId = null;
+  chats=chats.filter(item=>item.id!==id);
+  openMenuId=null;
 
   if(activeChatId===id){
-    activeChatId = null;
+    activeChatId=null;
     renderActiveChat();
     setPageTitle("Nouvelle discussion");
   }
@@ -1123,7 +1129,7 @@ function deleteChat(id){
 
 document.getElementById("historySearch").addEventListener("input",renderHistory);
 
-/* MARKDOWN AND CLIPBOARD */
+/* UTILITIES */
 
 function scrollToBottom(){
   conversation.scrollTo({
@@ -1133,42 +1139,50 @@ function scrollToBottom(){
 }
 
 async function copyText(text){
-  if(navigator.clipboard && window.isSecureContext){
+  if(navigator.clipboard&&window.isSecureContext){
     await navigator.clipboard.writeText(text);
     return;
   }
 
-  const temporary = document.createElement("textarea");
-  temporary.value = text;
-  temporary.style.position = "fixed";
-  temporary.style.opacity = "0";
+  const temporary=document.createElement("textarea");
+  temporary.value=text;
+  temporary.style.position="fixed";
+  temporary.style.opacity="0";
   document.body.appendChild(temporary);
   temporary.select();
 
-  const success = document.execCommand("copy");
+  const success=document.execCommand("copy");
   temporary.remove();
 
   if(!success) throw new Error("Copie impossible sur cet appareil.");
 }
 
 function normalizeDemonCode(text){
-  const source = String(text || "").trim();
+  const source=String(text||"").trim();
+
   if(/^\{image-size\s+\d+x\d+px\}/.test(source)){
     return "```demoncode\n"+source+"\n```";
   }
+
   return text;
 }
 
+/* MARKDOWN */
+
 function renderMarkdown(bubble,text){
-  if(!window.marked || !window.DOMPurify){
+  if(!window.marked||!window.DOMPurify){
     bubble.classList.remove("markdown");
-    bubble.textContent = text;
+    bubble.textContent=text;
     return;
   }
 
   try{
-    const html = marked.parse(normalizeDemonCode(text),{gfm:true,breaks:true});
-    bubble.innerHTML = DOMPurify.sanitize(html);
+    const html=marked.parse(normalizeDemonCode(text),{
+      gfm:true,
+      breaks:true
+    });
+
+    bubble.innerHTML=DOMPurify.sanitize(html);
     bubble.classList.add("markdown");
 
     bubble.querySelectorAll("a").forEach(link=>{
@@ -1210,8 +1224,8 @@ function prepareCodeBlocks(bubble){
       .find(name=>name.startsWith("language-"));
 
     language.textContent=languageClass
-      ? languageClass.replace("language-","")
-      : "code";
+      ?languageClass.replace("language-","")
+      :"code";
 
     const copyButton=document.createElement("button");
     copyButton.className="copy-code";
@@ -1225,6 +1239,7 @@ function prepareCodeBlocks(bubble){
       }catch{
         copyButton.textContent="Échec";
       }
+
       setTimeout(()=>copyButton.textContent="Copier",1600);
     });
 
@@ -1232,7 +1247,7 @@ function prepareCodeBlocks(bubble){
     pre.parentNode.insertBefore(wrapper,pre);
     wrapper.append(toolbar,pre);
 
-    if(language.textContent.toLowerCase()!=="demoncode" && window.hljs){
+    if(language.textContent.toLowerCase()!=="demoncode"&&window.hljs){
       try{hljs.highlightElement(code)}catch{}
     }
   });
@@ -1280,9 +1295,11 @@ function parseDemonCode(source){
     }
 
     for(let x=0;x<width;x++){
-      const values=row[x].split("-").map(value=>/^\d+$/.test(value)?Number(value):NaN);
+      const values=row[x].split("-").map(value=>
+        /^\d+$/.test(value)?Number(value):NaN
+      );
 
-      if(values.length!==channels ||
+      if(values.length!==channels||
          values.some(value=>!Number.isInteger(value)||value<0||value>255)){
         throw new Error(`Couleur invalide à la ligne ${y+1}, pixel ${x+1}.`);
       }
@@ -1315,13 +1332,13 @@ async function renderDemonCodeBlocks(bubble){
     );
 
     const isDemonCode=
-      (languageClass && languageClass.toLowerCase()==="language-demoncode") ||
+      (languageClass&&languageClass.toLowerCase()==="language-demoncode")||
       source.startsWith("{image-size ");
 
     if(!isDemonCode) continue;
 
     const wrapper=code.closest(".code-block");
-    if(!wrapper || wrapper.dataset.demonRendered) continue;
+    if(!wrapper||wrapper.dataset.demonRendered) continue;
     wrapper.dataset.demonRendered="true";
 
     const card=document.createElement("div");
@@ -1380,6 +1397,7 @@ async function renderDemonCodeBlocks(bubble){
         const percentage=Math.round(((y+1)/image.height)*100);
         progressBar.style.width=percentage+"%";
         percent.textContent=`Génération de l’image (${percentage}%)`;
+
         await new Promise(resolve=>requestAnimationFrame(resolve));
       }
 
@@ -1425,22 +1443,25 @@ async function renderDemonCodeBlocks(bubble){
         }catch{
           copyButton.textContent="Copie impossible";
         }
+
         setTimeout(()=>copyButton.textContent="Copier le code",1700);
       });
 
       shareButton.addEventListener("click",async()=>{
         shareButton.disabled=true;
+
         try{
           const blob=await createPngBlob();
           const file=new File([blob],"demoncode-image.png",{type:"image/png"});
 
-          if(navigator.share && navigator.canShare &&
+          if(navigator.share&&navigator.canShare&&
              navigator.canShare({files:[file]})){
             await navigator.share({
               title:"Image DemonCode",
               text:"Image créée avec Demon City IA.",
               files:[file]
             });
+
             percent.textContent="Partage terminé.";
           }else{
             downloadBlob(blob,"demoncode-image.png");
@@ -1466,6 +1487,7 @@ async function renderDemonCodeBlocks(bubble){
     }catch(error){
       progress.style.display="none";
       percent.textContent="";
+
       const errorBox=document.createElement("div");
       errorBox.className="demon-image-error";
       errorBox.textContent="Erreur DemonCode : "+error.message;
@@ -1506,6 +1528,7 @@ function addMessage(text,role,options={}){
     copy.className="message-tool";
     copy.type="button";
     copy.textContent="Copier";
+
     copy.addEventListener("click",async()=>{
       try{
         await copyText(text);
@@ -1513,18 +1536,39 @@ function addMessage(text,role,options={}){
       }catch{
         copy.textContent="Échec";
       }
+
       setTimeout(()=>copy.textContent="Copier",1500);
     });
 
     tools.appendChild(copy);
 
-    if(role==="user" && options.messageId){
+    if(role==="user"&&options.messageId){
       const edit=document.createElement("button");
       edit.className="message-tool";
       edit.type="button";
       edit.textContent="Modifier";
       edit.addEventListener("click",()=>editMessage(options.messageId));
       tools.appendChild(edit);
+
+      /* Appui long pour modifier un message */
+
+      row.addEventListener("pointerdown",()=>{
+        clearTimeout(longPressTimer);
+        longPressTimer=setTimeout(()=>{
+          editMessage(options.messageId);
+        },650);
+      });
+
+      ["pointerup","pointerleave","pointercancel"].forEach(eventName=>{
+        row.addEventListener(eventName,()=>{
+          clearTimeout(longPressTimer);
+        });
+      });
+
+      row.addEventListener("contextmenu",event=>{
+        event.preventDefault();
+        editMessage(options.messageId);
+      });
     }
 
     content.appendChild(tools);
@@ -1535,26 +1579,30 @@ function addMessage(text,role,options={}){
   return bubble;
 }
 
+function renderWelcome(){
+  conversation.innerHTML=`
+    <div class="welcome" id="welcome">
+      <div class="welcome-mark">DC</div>
+      <h1>Que faisons-nous aujourd'hui ?</h1>
+      <p>Ton espace pour discuter, développer Demon City, gérer ton serveur et créer de nouveaux projets.</p>
+      <div class="suggestions">
+        <button class="suggestion" data-prompt="Aide-moi à améliorer Demon City."><b>Améliorer Demon City</b><span>Idées et développement du serveur</span></button>
+        <button class="suggestion" data-prompt="Consulte le statut réel de mon serveur Falix."><b>État du serveur</b><span>Consulter le statut Falix</span></button>
+        <button class="suggestion" data-prompt="Affiche les dernières lignes de la console de mon serveur."><b>Consulter la console</b><span>Voir les derniers événements</span></button>
+        <button class="suggestion" data-prompt="Explore les fichiers de mon serveur Falix."><b>Explorer les fichiers</b><span>Parcourir les dossiers du serveur</span></button>
+        <button class="suggestion" data-prompt="Recherche sur Internet les dernières nouveautés de Minecraft Bedrock et donne-moi tes sources."><b>Recherche Web</b><span>Trouver des informations récentes</span></button>
+        <button class="suggestion" data-prompt="Je veux travailler sur DemonGuard."><b>Développer DemonGuard</b><span>Add-on et outils d'administration</span></button>
+      </div>
+    </div>`;
+}
+
 function renderActiveChat(){
   conversation.replaceChildren();
 
   const chat=getActiveChat();
 
-  if(!chat || !chat.messages.length){
-    conversation.innerHTML=`
-      <div class="welcome" id="welcome">
-        <div class="welcome-mark">DC</div>
-        <h1>Que faisons-nous aujourd'hui ?</h1>
-        <p>Ton espace pour discuter, développer Demon City, gérer ton serveur et créer de nouveaux projets.</p>
-        <div class="suggestions">
-          <button class="suggestion" data-prompt="Aide-moi à améliorer Demon City."><b>Améliorer Demon City</b><span>Idées et développement du serveur</span></button>
-          <button class="suggestion" data-prompt="Consulte le statut réel de mon serveur Falix."><b>État du serveur</b><span>Consulter le statut Falix</span></button>
-          <button class="suggestion" data-prompt="Affiche les dernières lignes de la console de mon serveur."><b>Consulter la console</b><span>Voir les derniers événements</span></button>
-          <button class="suggestion" data-prompt="Explore les fichiers de mon serveur Falix."><b>Explorer les fichiers</b><span>Parcourir les dossiers du serveur</span></button>
-          <button class="suggestion" data-prompt="Recherche sur Internet les dernières nouveautés de Minecraft Bedrock et donne-moi tes sources."><b>Recherche Web</b><span>Trouver des informations récentes</span></button>
-          <button class="suggestion" data-prompt="Je veux travailler sur DemonGuard."><b>Développer DemonGuard</b><span>Add-on et outils d'administration</span></button>
-        </div>
-      </div>`;
+  if(!chat||!chat.messages.length){
+    renderWelcome();
     return;
   }
 
@@ -1582,11 +1630,15 @@ function editMessage(messageId){
   if(!chat) return;
 
   const index=chat.messages.findIndex(message=>message.id===messageId);
-  if(index<0 || chat.messages[index].role!=="user") return;
+  if(index<0||chat.messages[index].role!=="user") return;
 
   const message=chat.messages[index];
-  const row=Array.from(conversation.querySelectorAll(".message.user"))
-    .find(element=>element.textContent.includes(message.text));
+
+  const rows=Array.from(conversation.querySelectorAll(".message.user"));
+  const row=rows.find(element=>{
+    const bubble=element.querySelector(".bubble");
+    return bubble&&bubble.textContent===message.text;
+  });
 
   if(!row) return;
 
@@ -1614,7 +1666,7 @@ function editMessage(messageId){
 
   save.addEventListener("click",async()=>{
     const updated=textarea.value.trim();
-    if(!updated) return;
+    if(!updated||sending) return;
 
     chat.messages=chat.messages.slice(0,index);
     chat.messages.push({
@@ -1623,6 +1675,10 @@ function editMessage(messageId){
       text:updated,
       createdAt:Date.now()
     });
+
+    if(index===0){
+      chat.title=generateTitle(updated);
+    }
 
     updateChat(chat);
     renderActiveChat();
@@ -1639,11 +1695,13 @@ function editMessage(messageId){
 
 function safeFalixUrl(value){
   if(typeof value!=="string") return null;
+
   try{
     const url=new URL(value);
-    const official=url.hostname==="falixnodes.net" ||
+    const official=url.hostname==="falixnodes.net"||
       url.hostname.endsWith(".falixnodes.net");
-    return url.protocol==="https:" && official ? url.href : null;
+
+    return url.protocol==="https:"&&official?url.href:null;
   }catch{
     return null;
   }
@@ -1678,7 +1736,7 @@ function addVerificationCard(actionUrl,parent){
 }
 
 function addActionCard(bubble,action){
-  if(!action || !action.actionId) return;
+  if(!action||!action.actionId) return;
 
   const card=document.createElement("div");
   card.className="action-card";
@@ -1700,7 +1758,7 @@ function addActionCard(bubble,action){
 
   const command=document.createElement("code");
   command.className="action-command";
-  command.textContent=action.command || "Action à confirmer";
+  command.textContent=action.command||"Action à confirmer";
 
   const expiry=document.createElement("div");
   expiry.className="action-expiry";
@@ -1731,7 +1789,7 @@ function addActionCard(bubble,action){
   }
 
   async function processAction(endpoint,loadingLabel,doneLabel){
-    if(confirmButton.disabled || cancelButton.disabled) return;
+    if(confirmButton.disabled||cancelButton.disabled) return;
 
     confirmButton.disabled=true;
     cancelButton.disabled=true;
@@ -1746,24 +1804,26 @@ function addActionCard(bubble,action){
 
       const data=await response.json();
 
-      if(!response.ok || data.success!==true){
+      if(!response.ok||data.success!==true){
         lockButtons("Demande terminée");
-        const errorBubble=addMessage(
-          data.reply || data.error || "L'action n'a pas pu être traitée.",
-          "assistant"
-        );
+
+        const reply=data.reply||data.error||"L'action n'a pas pu être traitée.";
+        const errorBubble=addMessage(reply,"assistant");
 
         if(data.actionUrl) addVerificationCard(data.actionUrl,errorBubble);
-        saveAssistantMessage(data.reply || data.error || "Action impossible.");
+        saveAssistantMessage(reply);
         return;
       }
 
       lockButtons(doneLabel);
-      addMessage(data.reply || "La demande a été traitée.","assistant");
-      saveAssistantMessage(data.reply || "La demande a été traitée.");
+
+      const reply=data.reply||"La demande a été traitée.";
+      addMessage(reply,"assistant");
+      saveAssistantMessage(reply);
 
     }catch(error){
       lockButtons("Demande terminée");
+
       const text="Je n'ai pas pu terminer cette action : "+error.message;
       addMessage(text,"assistant");
       saveAssistantMessage(text);
@@ -1797,8 +1857,8 @@ function saveAssistantMessage(text,extra={}){
 /* CHAT */
 
 async function sendMessage(text,options={}){
-  const clean=String(text || "").trim();
-  if(!clean || sending) return;
+  const clean=String(text||"").trim();
+  if(!clean||sending) return;
 
   if(!activeChatId) createChat();
 
@@ -1814,9 +1874,11 @@ async function sendMessage(text,options={}){
     };
 
     chat.messages.push(userMessage);
+
     if(chat.messages.filter(message=>message.role==="user").length===1){
       chat.title=generateTitle(clean);
     }
+
     updateChat(chat);
     addMessage(clean,"user",{messageId:userMessage.id});
   }
@@ -1839,12 +1901,12 @@ async function sendMessage(text,options={}){
 
     const data=await response.json();
 
-    if(!response.ok || data.success===false){
-      throw new Error(data.error || "Impossible de contacter le moteur IA.");
+    if(!response.ok||data.success===false){
+      throw new Error(data.error||"Impossible de contacter le moteur IA.");
     }
 
-    const answer=data.reply || data.answer || data.response ||
-      data.output_text || data.message;
+    const answer=data.reply||data.answer||data.response||
+      data.output_text||data.message;
 
     if(typeof answer!=="string"){
       throw new Error("La réponse de l'IA est introuvable.");
@@ -1856,8 +1918,8 @@ async function sendMessage(text,options={}){
     if(data.actionUrl) addVerificationCard(data.actionUrl,loading);
 
     saveAssistantMessage(answer,{
-      pendingAction:data.pendingAction || null,
-      actionUrl:data.actionUrl || null
+      pendingAction:data.pendingAction||null,
+      actionUrl:data.actionUrl||null
     });
 
     scrollToBottom();
@@ -1876,10 +1938,7 @@ async function sendMessage(text,options={}){
   }
 }
 
-function saveCurrentChat(){
-  const chat=getActiveChat();
-  if(chat) updateChat(chat);
-}
+/* COMPOSER */
 
 form.addEventListener("submit",event=>{
   event.preventDefault();
@@ -1888,63 +1947,27 @@ form.addEventListener("submit",event=>{
 
 promptBox.addEventListener("input",()=>{
   promptBox.style.height="auto";
-  promptBox.style.height=Math.min(promptBox.scrollHeight,150)+"px";
+  promptBox.style.height=Math.min(promptBox.scrollHeight,180)+"px";
 });
 
+/*
+  Entrée = nouvelle ligne.
+  Ctrl + Entrée = envoyer.
+  Le bouton flèche reste également disponible.
+*/
+
 promptBox.addEventListener("keydown",event=>{
-  if(event.key==="Enter" && !event.shiftKey){
+  if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)){
     event.preventDefault();
     form.requestSubmit();
   }
 });
 
+/* SUGGESTIONS */
+
 conversation.addEventListener("click",event=>{
   const button=event.target.closest("[data-prompt]");
   if(button) sendMessage(button.dataset.prompt);
-});
-
-/* NAVIGATION */
-
-function setNavigationActive(section){
-  document.querySelectorAll("[data-section]").forEach(button=>{
-    button.classList.toggle("active",button.dataset.section===section);
-  });
-}
-
-const sectionPrompts={
-  Serveur:"Consulte le statut réel de mon serveur Falix et indique-moi s'il fonctionne. Ne démarre, n'arrête et ne redémarre rien sans me demander.",
-  Console:"Consulte les dernières lignes de la console de mon serveur Falix et explique-moi ce qui s'y passe.",
-  Fichiers:"Explore les fichiers et dossiers de mon serveur Falix. Commence par afficher le contenu du dossier racine.",
-  Web:"Recherche sur Internet les dernières informations utiles à Demon City et donne-moi les sources."
-};
-
-function navigateSection(section){
-  activeSection=section;
-  setNavigationActive(section);
-  closeMobileMenu();
-
-  if(section==="Discussion"){
-    if(!activeChatId) createChat();
-    else openChat(activeChatId);
-    return;
-  }
-
-  createChat();
-  setPageTitle(section);
-  sendMessage(sectionPrompts[section]);
-}
-
-document.querySelectorAll("[data-section]").forEach(button=>{
-  button.addEventListener("click",()=>{
-    navigateSection(button.dataset.section);
-  });
-});
-
-/* NEW CHAT */
-
-document.getElementById("newChat").addEventListener("click",()=>{
-  createChat();
-  setNavigationActive("Discussion");
 });
 
 /* STATUS */
@@ -1957,9 +1980,11 @@ async function checkStatus(){
     const response=await fetch("/status");
     const data=await response.json();
 
-    if(!response.ok || !data.success) throw new Error("Statut indisponible");
+    if(!response.ok||!data.success){
+      throw new Error("Statut indisponible");
+    }
 
-    if(data.aiConfigured && data.falixConfigured){
+    if(data.aiConfigured&&data.falixConfigured){
       dot.classList.remove("offline");
       label.textContent="IA en ligne · Falix connecté";
     }else{
@@ -1983,6 +2008,12 @@ document.getElementById("menuBtn").addEventListener("click",()=>{
 });
 
 document.getElementById("overlay").addEventListener("click",closeMobileMenu);
+
+/* NEW CHAT */
+
+document.getElementById("newChat").addEventListener("click",()=>{
+  createChat();
+});
 
 /* INITIALIZATION */
 
