@@ -10,8 +10,8 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark-dimmed.min.css">
 
 <style>
-:root {
-  color-scheme: dark;
+:root{
+  color-scheme:dark;
   --bg:#171316;
   --sidebar:#100d10;
   --panel:#211a20;
@@ -109,6 +109,15 @@ button{cursor:pointer}
 .action-cancel:hover{background:#4a3744}
 .action-buttons button:disabled{opacity:.5;cursor:not-allowed}
 .action-card.finished{opacity:.7;border-color:#51404b}
+
+/* Carte de vérification Falix */
+.verification-card{margin-top:14px;padding:16px;border:1px solid #86506a;border-radius:14px;background:#281a23;max-width:430px}
+.verification-card strong{display:block;margin-bottom:7px;color:#ffb5ce}
+.verification-card p{font-size:13px;color:#d6c3ce;margin:0 0 13px}
+.verification-button{display:block;text-align:center;padding:11px 14px;border-radius:10px;background:#a92750;color:white;font-weight:750;text-decoration:none}
+.verification-button:hover{background:#c33562}
+.verification-note{display:block;margin-top:10px;color:#aa9ca7;font-size:11px}
+
 .composer-wrap{width:100%;max-width:850px;margin:0 auto;padding:0 24px 16px}
 .composer{display:flex;align-items:flex-end;gap:10px;padding:10px 11px 10px 16px;border:1px solid #51404b;border-radius:22px;background:var(--panel)}
 .composer:focus-within{border-color:#96506a}
@@ -269,6 +278,7 @@ function renderMarkdown(bubble, text) {
   try {
     const html = marked.parse(text, { gfm:true, breaks:true });
     bubble.innerHTML = DOMPurify.sanitize(html);
+
     bubble.classList.add("markdown");
 
     bubble.querySelectorAll("a").forEach(link => {
@@ -372,7 +382,62 @@ function addMessage(text, role) {
   return bubble;
 }
 
-// Carte de confirmation générique : commande, serveur ou fichier
+// Vérifier qu'un lien est bien un lien HTTPS officiel Falix
+function safeFalixUrl(value) {
+  if (typeof value !== "string") return null;
+
+  try {
+    const url = new URL(value);
+
+    const officialHost =
+      url.hostname === "falixnodes.net" ||
+      url.hostname.endsWith(".falixnodes.net");
+
+    if (url.protocol !== "https:" || !officialHost) {
+      return null;
+    }
+
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+// Afficher le lien de vérification Falix
+function addVerificationCard(actionUrl, parent) {
+  const safeUrl = safeFalixUrl(actionUrl);
+
+  if (!safeUrl) return;
+
+  const card = document.createElement("div");
+  card.className = "verification-card";
+
+  const heading = document.createElement("strong");
+  heading.textContent = "Vérification Falix nécessaire";
+
+  const description = document.createElement("p");
+  description.textContent =
+    "Falix demande une vérification avant d'autoriser le démarrage de ton serveur gratuit. Ouvre la page officielle et suis les instructions.";
+
+  const link = document.createElement("a");
+  link.className = "verification-button";
+  link.href = safeUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "Ouvrir la vérification Falix";
+
+  const note = document.createElement("small");
+  note.className = "verification-note";
+  note.textContent =
+    "Après la vérification, reviens ici et demande à Demon City IA de démarrer le serveur.";
+
+  card.append(heading, description, link, note);
+  parent.appendChild(card);
+
+  scrollToBottom();
+}
+
+// Carte de confirmation générique
 function addActionCard(bubble, action) {
   if (!action || !action.actionId) return;
 
@@ -397,8 +462,6 @@ function addActionCard(bubble, action) {
 
   const command = document.createElement("code");
   command.className = "action-command";
-
-  // Le serveur fournit ici un libellé, pas toujours une commande Minecraft
   command.textContent = action.command || "Action à confirmer";
 
   const expiry = document.createElement("div");
@@ -422,7 +485,6 @@ function addActionCard(bubble, action) {
   card.append(heading, description, command, expiry, buttons);
   bubble.appendChild(card);
 
-  // Désactiver les boutons après une réponse du serveur
   function lockButtons(label) {
     confirmButton.disabled = true;
     cancelButton.disabled = true;
@@ -448,9 +510,19 @@ function addActionCard(bubble, action) {
       const data = await response.json();
 
       if (!response.ok || data.success !== true) {
-        throw new Error(
-          data.reply || data.error || "L'action n'a pas pu être traitée."
+        lockButtons("Demande terminée");
+
+        const errorBubble = addMessage(
+          data.reply || data.error || "L'action n'a pas pu être traitée.",
+          "assistant"
         );
+
+        // Afficher le lien renvoyé par Falix
+        if (data.actionUrl) {
+          addVerificationCard(data.actionUrl, errorBubble);
+        }
+
+        return;
       }
 
       lockButtons(doneLabel);
@@ -517,9 +589,13 @@ async function sendMessage(text) {
 
     renderMarkdown(loading, answer);
 
-    // Afficher une carte pour toutes les actions en attente
     if (data.pendingAction) {
       addActionCard(loading, data.pendingAction);
+    }
+
+    // Afficher un lien de vérification si le serveur en renvoie un
+    if (data.actionUrl) {
+      addVerificationCard(data.actionUrl, loading);
     }
 
     scrollToBottom();
