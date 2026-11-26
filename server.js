@@ -7,14 +7,8 @@ const app = express();
 // Autoriser les requêtes JSON
 app.use(express.json());
 
-// Page d'accueil
-app.get("/", (req, res) => {
-  res.send(`
-    <h1>Demon City IA</h1>
-    <p>Le serveur fonctionne !</p>
-    <p>Assistant en cours de développement.</p>
-  `);
-});
+// Afficher l'interface Demon City IA
+app.use(express.static("public"));
 
 // Vérifier l'état de l'application
 app.get("/status", (req, res) => {
@@ -25,7 +19,7 @@ app.get("/status", (req, res) => {
   });
 });
 
-// Démarrer le serveur sur le port fourni par l'hébergeur
+// Démarrer le serveur
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
