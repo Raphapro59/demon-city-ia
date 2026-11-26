@@ -308,7 +308,7 @@ Ne prétends jamais avoir accès à des fonctions non disponibles.
 // Configuration Falix
 function getFalixConfig() {
   const apiKey = process.env.FALIX_API_KEY;
-  const serverId = process.env.FALIX_SERVER_ID;
+  const serverId = process.env.FALIX_SERVER_ID || "3574991";
 
   if (!apiKey || !serverId) {
     throw new Error("Configuration Falix incomplète.");
@@ -402,16 +402,44 @@ async function getFalixStatus() {
   };
 }
 
-// Logs
+// Logs de la console Falix
 async function getFalixLogs() {
-  const data = await falixRequest(
-    serverEndpoint("/console/log?lines=40")
+  const { apiKey, serverId } = getFalixConfig();
+
+  // Appel direct à l'endpoint de logs Falix
+  const response = await fetch(
+    `https://client.falixnodes.net/api/v2/servers/${encodeURIComponent(serverId)}/console/log`,
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      },
+      signal: AbortSignal.timeout(20000)
+    }
   );
 
+  // Lire la réponse JSON
+  const result = await response.json().catch(() => ({}));
+
+  // Gérer les erreurs HTTP
+  if (!response.ok) {
+    const message =
+      result?.error?.message ||
+      result?.message ||
+      `Erreur Falix (${response.status})`;
+
+    const error = new Error(message);
+    error.status = response.status;
+    error.actionUrl = getFalixActionUrl(result);
+    throw error;
+  }
+
+  // Falix peut renvoyer les données dans result.data
+  const data = result?.data ?? result;
+
   return {
-    source: data.source || null,
-    truncated: Boolean(data.truncated),
-    lines: Array.isArray(data.lines) ? data.lines : []
+    source: data?.source ?? null,
+    truncated: Boolean(data?.truncated),
+    lines: Array.isArray(data?.lines) ? data.lines : []
   };
 }
 
@@ -739,7 +767,8 @@ app.get("/status", (req, res) => {
     status: "online",
     aiConfigured: Boolean(process.env.GROQ_API_KEY),
     falixConfigured: Boolean(
-      process.env.FALIX_API_KEY && process.env.FALIX_SERVER_ID
+      process.env.FALIX_API_KEY &&
+      (process.env.FALIX_SERVER_ID || "3574991")
     ),
     webSearchEnabled: true
   });
@@ -783,7 +812,10 @@ app.get("/falix-console", async (req, res) => {
     res.json({ success: true, console: logs });
   } catch (error) {
     console.error("Erreur console Falix :", error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
