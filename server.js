@@ -11,15 +11,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "20kb" }));
 
-// Sessions et protection de connexion
+// Sessions et protections
 const sessions = new Map();
 const loginAttempts = new Map();
+
+// Actions en attente de validation, identifiées par un jeton unique
 const pendingCommands = new Map();
 
 const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const COMMAND_CONFIRMATION_DURATION = 2 * 60 * 1000;
 const COOKIE_NAME = "dcia_session";
 
+// Vérifier la configuration de sécurité
 function securityConfigured() {
   return Boolean(
     process.env.SITE_PASSWORD &&
@@ -36,7 +39,7 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Vérifier la session du visiteur
+// Récupérer la session du visiteur
 function getSession(req) {
   if (!securityConfigured()) return null;
 
@@ -68,7 +71,14 @@ function getSession(req) {
 
   if (!session || session.expiresAt < Date.now()) {
     sessions.delete(id);
-    pendingCommands.delete(id);
+
+    // Supprimer aussi les commandes de cette session
+    for (const [actionId, action] of pendingCommands) {
+      if (action.sessionId === id) {
+        pendingCommands.delete(actionId);
+      }
+    }
+
     return null;
   }
 
@@ -167,7 +177,6 @@ app.post("/auth/login", (req, res) => {
   const submitted = req.body?.password;
 
   if (!securityConfigured()) {
-    console.error("Configuration de sécurité incomplète.");
     return res.status(503).json({
       error: "Configuration de sécurité incomplète."
     });
@@ -226,7 +235,12 @@ app.post("/auth/logout", (req, res) => {
 
   if (current) {
     sessions.delete(current.id);
-    pendingCommands.delete(current.id);
+
+    for (const [actionId, action] of pendingCommands) {
+      if (action.sessionId === current.id) {
+        pendingCommands.delete(actionId);
+      }
+    }
   }
 
   res.setHeader(
@@ -266,31 +280,25 @@ const SYSTEM_PROMPT = `
 Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
 
 Tu parles français naturellement, clairement et de manière conviviale.
-
 Ne te présente jamais spontanément.
-Ne commence pas chaque réponse par "Je suis Demon City IA".
 Réponds directement aux demandes.
 
-Tu peux utiliser ces fonctions :
+Fonctions disponibles :
 - get_server_status : consulter le statut réel du serveur Falix.
 - get_console_log : consulter les dernières lignes de la console.
 - prepare_server_command : préparer une commande Minecraft.
 
 Si l'utilisateur demande le statut, utilise get_server_status.
 S'il demande ce qui se passe dans la console, utilise get_console_log.
-Si l'utilisateur demande d'exécuter une commande Minecraft, utilise
-prepare_server_command.
+S'il demande d'exécuter une commande Minecraft, utilise prepare_server_command.
 
 IMPORTANT :
-La fonction prepare_server_command ne lance PAS directement la commande.
-Elle prépare un code de confirmation temporaire.
-Présente ce code clairement à l'utilisateur et demande-lui de répondre :
-CONFIRMER suivi du code.
+prepare_server_command prépare une commande, mais ne l'exécute jamais.
+L'interface affichera automatiquement des boutons Valider et Refuser.
+Ne demande jamais à l'utilisateur de taper un code de confirmation.
+Ne prétends jamais qu'une commande a été exécutée avant que Falix
+ait répondu positivement après un clic sur Valider.
 
-Ne prétends jamais qu'une commande a été exécutée avant confirmation
-et avant le résultat positif de Falix.
-
-L'utilisateur peut répondre ANNULER pour annuler une commande en attente.
 Ne révèle jamais les clés API, mots de passe ou secrets.
 Ne prétends jamais avoir accès à des fonctions non disponibles.
 `;
@@ -387,8 +395,8 @@ async function sendFalixCommand(command) {
   );
 
   return {
-    accepted: data.accepted === true,
-    serverId: data.server_id
+    accepted: data?.accepted === true,
+    serverId: data?.server_id
   };
 }
 
@@ -409,106 +417,116 @@ function prepareCommand(sessionId, command) {
     throw new Error("Les commandes sur plusieurs lignes sont interdites.");
   }
 
-  // Bloquer quelques commandes à fort impact dans cette première version
-  const forbidden = [
-    "stop",
-    "restart",
-    "kill",
-    "op",
-    "deop"
-  ];
-
+  // Bloquer les commandes à fort impact
+  const forbidden = ["stop", "restart", "kill", "op", "deop"];
   const firstWord = cleaned.split(/\s+/)[0].toLowerCase();
 
   if (forbidden.includes(firstWord)) {
-    throw new Error(
-      "Cette commande est bloquée dans cette première version."
-    );
+    throw new Error("Cette commande est bloquée dans cette première version.");
   }
 
-  const code = crypto.randomBytes(3).toString("hex").toUpperCase();
+  // Créer un identifiant secret et unique pour le bouton
+  const actionId = crypto.randomBytes(24).toString("base64url");
+  const expiresAt = Date.now() + COMMAND_CONFIRMATION_DURATION;
 
-  pendingCommands.set(sessionId, {
+  pendingCommands.set(actionId, {
+    sessionId,
     command: cleaned,
-    code,
-    expiresAt: Date.now() + COMMAND_CONFIRMATION_DURATION
+    expiresAt
   });
 
   return {
     success: true,
     confirmationRequired: true,
-    code,
-    expiresInSeconds: 120
+    actionId,
+    command: cleaned,
+    expiresAt
   };
 }
 
-// Confirmer ou annuler une commande en attente
-async function handleConfirmation(sessionId, message) {
-  const pending = pendingCommands.get(sessionId);
+// Valider une commande depuis le bouton de l'interface
+app.post("/actions/confirm", async (req, res) => {
+  const actionId = req.body?.actionId;
 
-  if (!pending) {
-    return {
-      handled: false
-    };
+  if (typeof actionId !== "string" || actionId.length > 100) {
+    return res.status(400).json({
+      success: false,
+      reply: "La demande de validation est invalide."
+    });
   }
 
-  if (message.trim().toUpperCase() === "ANNULER") {
-    pendingCommands.delete(sessionId);
+  const pending = pendingCommands.get(actionId);
 
-    return {
-      handled: true,
-      reply: "Commande annulée. Rien n'a été envoyé à Falix."
-    };
-  }
-
-  const match = message.trim().match(/^CONFIRMER\s+([A-F0-9]{6})$/i);
-
-  if (!match) {
-    return { handled: false };
+  if (!pending || pending.sessionId !== req.sessionId) {
+    return res.status(404).json({
+      success: false,
+      reply: "Cette commande n'existe plus ou a déjà été traitée."
+    });
   }
 
   if (Date.now() > pending.expiresAt) {
-    pendingCommands.delete(sessionId);
+    pendingCommands.delete(actionId);
 
-    return {
-      handled: true,
-      reply: "Le code a expiré. Prépare à nouveau ta commande."
-    };
+    return res.status(410).json({
+      success: false,
+      reply: "Le délai de validation est dépassé. Prépare à nouveau ta commande."
+    });
   }
 
-  if (match[1].toUpperCase() !== pending.code) {
-    return {
-      handled: true,
-      reply: "Code incorrect. La commande n'a pas été envoyée."
-    };
-  }
-
-  // Supprimer avant l'appel pour empêcher une double exécution
-  pendingCommands.delete(sessionId);
+  // Supprimer l'action avant l'appel pour empêcher les doubles clics
+  pendingCommands.delete(actionId);
 
   try {
     const result = await sendFalixCommand(pending.command);
 
     if (!result.accepted) {
-      return {
-        handled: true,
-        reply: "Falix n'a pas confirmé l'acceptation de la commande."
-      };
+      return res.status(502).json({
+        success: false,
+        reply: "Falix n'a pas confirmé l'acceptation de la commande. Vérifie la console du serveur."
+      });
     }
 
-    return {
-      handled: true,
-      reply: `Falix a accepté la commande : ${pending.command}`
-    };
+    return res.json({
+      success: true,
+      reply: `C'est fait ! La commande \`${pending.command}\` a bien été acceptée par Falix.`
+    });
   } catch (error) {
     console.error("Erreur commande Falix :", error.message);
 
-    return {
-      handled: true,
-      reply: `Impossible d'envoyer la commande à Falix : ${error.message}`
-    };
+    return res.status(502).json({
+      success: false,
+      reply: `Je n'ai pas réussi à envoyer la commande à Falix : ${error.message}`
+    });
   }
-}
+});
+
+// Refuser une commande depuis le bouton de l'interface
+app.post("/actions/cancel", (req, res) => {
+  const actionId = req.body?.actionId;
+
+  if (typeof actionId !== "string" || actionId.length > 100) {
+    return res.status(400).json({
+      success: false,
+      reply: "La demande d'annulation est invalide."
+    });
+  }
+
+  const pending = pendingCommands.get(actionId);
+
+  if (!pending || pending.sessionId !== req.sessionId) {
+    return res.status(404).json({
+      success: false,
+      reply: "Cette commande n'existe plus ou a déjà été traitée."
+    });
+  }
+
+  pendingCommands.delete(actionId);
+
+  return res.json({
+    success: true,
+    reply: "C'est noté ! J'ai annulé la commande. Rien n'a été envoyé à Falix."
+  });
+});
 
 // Statut général de Demon City IA
 app.get("/status", (req, res) => {
@@ -543,15 +561,12 @@ app.get("/falix-test", async (req, res) => {
   }
 });
 
-// Route de statut Falix
+// Statut Falix
 app.get("/falix-status", async (req, res) => {
   try {
     const server = await getFalixStatus();
 
-    res.json({
-      success: true,
-      server
-    });
+    res.json({ success: true, server });
   } catch (error) {
     console.error("Erreur statut Falix :", error.message);
 
@@ -562,7 +577,7 @@ app.get("/falix-status", async (req, res) => {
   }
 });
 
-// Route de lecture de la console
+// Lecture de la console
 app.get("/falix-console", async (req, res) => {
   try {
     const logs = await getFalixLogs();
@@ -613,8 +628,7 @@ const availableTools = [
     type: "function",
     function: {
       name: "prepare_server_command",
-      description:
-        "Préparer une commande Minecraft. Ne l'exécute pas : un code de confirmation sera demandé à l'utilisateur.",
+      description: "Préparer une commande Minecraft. Elle ne sera exécutée qu'après le clic de l'utilisateur sur Valider.",
       parameters: {
         type: "object",
         properties: {
@@ -657,19 +671,6 @@ app.post("/chat", async (req, res) => {
   }
 
   try {
-    // Vérifier d'abord si l'utilisateur confirme une commande
-    const confirmation = await handleConfirmation(
-      req.sessionId,
-      message
-    );
-
-    if (confirmation.handled) {
-      return res.json({
-        success: true,
-        reply: confirmation.reply
-      });
-    }
-
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: message.trim() }
@@ -716,6 +717,8 @@ app.post("/chat", async (req, res) => {
       });
     }
 
+    let pendingAction = null;
+
     // Exécuter uniquement les fonctions prévues
     if (assistantMessage.tool_calls?.length) {
       messages.push(assistantMessage);
@@ -738,12 +741,21 @@ app.post("/chat", async (req, res) => {
               console: await getFalixLogs()
             });
           } else if (functionName === "prepare_server_command") {
-            const prepared = prepareCommand(
-              req.sessionId,
-              args.command
-            );
+            // Préparer la commande et transmettre l'action à l'interface
+            const prepared = prepareCommand(req.sessionId, args.command);
 
-            toolResult = JSON.stringify(prepared);
+            pendingAction = {
+              actionId: prepared.actionId,
+              command: prepared.command,
+              expiresAt: prepared.expiresAt
+            };
+
+            toolResult = JSON.stringify({
+              success: true,
+              confirmationRequired: true,
+              command: prepared.command,
+              message: "La commande est prête. L'utilisateur doit choisir Valider ou Refuser dans l'interface."
+            });
           } else {
             toolResult = JSON.stringify({
               success: false,
@@ -794,8 +806,7 @@ app.post("/chat", async (req, res) => {
         });
       }
 
-      const finalAnswer =
-        finalResult.choices?.[0]?.message?.content;
+      const finalAnswer = finalResult.choices?.[0]?.message?.content;
 
       if (!finalAnswer) {
         return res.status(502).json({
@@ -806,7 +817,8 @@ app.post("/chat", async (req, res) => {
 
       return res.json({
         success: true,
-        reply: finalAnswer
+        reply: finalAnswer,
+        pendingAction
       });
     }
 
@@ -819,15 +831,16 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
-      reply: answer
+      reply: answer,
+      pendingAction: null
     });
 
   } catch (error) {
     console.error("Erreur serveur :", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: "Impossible de contacter le moteur IA."
     });
