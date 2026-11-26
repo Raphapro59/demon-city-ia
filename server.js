@@ -9,17 +9,15 @@ const PORT = process.env.PORT || 3000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "20kb" }));
+app.use(express.json({ limit: "100kb" }));
 
 // Sessions et protections
 const sessions = new Map();
 const loginAttempts = new Map();
-
-// Actions en attente de validation, identifiées par un jeton unique
-const pendingCommands = new Map();
+const pendingActions = new Map();
 
 const SESSION_DURATION = 24 * 60 * 60 * 1000;
-const COMMAND_CONFIRMATION_DURATION = 2 * 60 * 1000;
+const ACTION_DURATION = 2 * 60 * 1000;
 const COOKIE_NAME = "dcia_session";
 
 // Vérifier la configuration de sécurité
@@ -31,7 +29,7 @@ function securityConfigured() {
   );
 }
 
-// Signer les identifiants de session
+// Signer les sessions
 function signSession(id) {
   return crypto
     .createHmac("sha256", process.env.SESSION_SECRET)
@@ -39,7 +37,7 @@ function signSession(id) {
     .digest("base64url");
 }
 
-// Récupérer la session du visiteur
+// Récupérer la session
 function getSession(req) {
   if (!securityConfigured()) return null;
 
@@ -72,11 +70,8 @@ function getSession(req) {
   if (!session || session.expiresAt < Date.now()) {
     sessions.delete(id);
 
-    // Supprimer aussi les commandes de cette session
-    for (const [actionId, action] of pendingCommands) {
-      if (action.sessionId === id) {
-        pendingCommands.delete(actionId);
-      }
+    for (const [actionId, action] of pendingActions) {
+      if (action.sessionId === id) pendingActions.delete(actionId);
     }
 
     return null;
@@ -109,7 +104,6 @@ background:#171316;color:white;outline:none}
 input:focus{border-color:#c33562}
 button{width:100%;margin-top:14px;padding:13px;border:0;border-radius:10px;
 background:#a92750;color:white;font-weight:700;cursor:pointer}
-button:disabled{opacity:.5}
 #error{color:#ff829c;font-size:12px;margin-top:12px;min-height:18px}
 </style>
 </head>
@@ -127,32 +121,28 @@ placeholder="Ton mot de passe" required>
 </form>
 </div>
 <script>
-const form = document.getElementById("loginForm");
-const input = document.getElementById("password");
-const error = document.getElementById("error");
-const button = document.getElementById("submit");
+const form=document.getElementById("loginForm");
+const input=document.getElementById("password");
+const error=document.getElementById("error");
+const button=document.getElementById("submit");
 
-form.addEventListener("submit", async event => {
+form.addEventListener("submit",async event=>{
   event.preventDefault();
-  button.disabled = true;
-  error.textContent = "";
-
-  try {
-    const response = await fetch("/auth/login", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({password: input.value})
+  button.disabled=true;
+  error.textContent="";
+  try{
+    const response=await fetch("/auth/login",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({password:input.value})
     });
-
-    const data = await response.json();
-
-    if (!response.ok) throw new Error(data.error || "Connexion refusée.");
-
-    location.href = "/";
-  } catch (err) {
-    error.textContent = err.message;
-  } finally {
-    button.disabled = false;
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||"Connexion refusée.");
+    location.href="/";
+  }catch(err){
+    error.textContent=err.message;
+  }finally{
+    button.disabled=false;
   }
 });
 </script>
@@ -236,9 +226,9 @@ app.post("/auth/logout", (req, res) => {
   if (current) {
     sessions.delete(current.id);
 
-    for (const [actionId, action] of pendingCommands) {
+    for (const [actionId, action] of pendingActions) {
       if (action.sessionId === current.id) {
-        pendingCommands.delete(actionId);
+        pendingActions.delete(actionId);
       }
     }
   }
@@ -280,24 +270,50 @@ const SYSTEM_PROMPT = `
 Tu es Demon City IA, l'assistant officiel du serveur Minecraft Demon City.
 
 Tu parles français naturellement, clairement et de manière conviviale.
-Ne te présente jamais spontanément.
-Réponds directement aux demandes.
+Tu connais Minecraft Bedrock et le projet Demon City.
+Tu ne prétends jamais avoir effectué une action que tu n'as pas réellement effectuée.
 
-Fonctions disponibles :
+OUTILS DISPONIBLES :
+
 - get_server_status : consulter le statut réel du serveur Falix.
 - get_console_log : consulter les dernières lignes de la console.
 - prepare_server_command : préparer une commande Minecraft.
+- prepare_server_power : préparer start, stop ou restart.
+- list_server_files : explorer les dossiers Falix.
+- read_server_file : lire un fichier Falix.
+- prepare_file_write : préparer la modification ou création d'un fichier.
+
+RECHERCHE INTERNET :
+
+Tu disposes de browser_search.
+Utilise-le quand l'utilisateur demande une recherche Internet ou des informations récentes.
+Privilégie les sources officielles et fiables.
+Présente les liens et résume les résultats.
+Ne prétends jamais avoir recherché si aucune recherche n'a été effectuée.
+
+CONTRÔLE FALIX :
 
 Si l'utilisateur demande le statut, utilise get_server_status.
-S'il demande ce qui se passe dans la console, utilise get_console_log.
-S'il demande d'exécuter une commande Minecraft, utilise prepare_server_command.
+S'il demande les logs, utilise get_console_log.
+Pour démarrer, arrêter ou redémarrer, utilise prepare_server_power.
+Ne propose jamais de lancer ces actions avec une commande Minecraft "stop".
 
-IMPORTANT :
-prepare_server_command prépare une commande, mais ne l'exécute jamais.
-L'interface affichera automatiquement des boutons Valider et Refuser.
-Ne demande jamais à l'utilisateur de taper un code de confirmation.
-Ne prétends jamais qu'une commande a été exécutée avant que Falix
-ait répondu positivement après un clic sur Valider.
+FICHIERS :
+
+Utilise list_server_files pour explorer un dossier.
+Utilise read_server_file pour lire un fichier.
+Utilise prepare_file_write pour modifier ou créer un fichier.
+Ne prétends jamais avoir modifié un fichier avant sa validation et la réponse positive de Falix.
+Ne supprime jamais un fichier sans autorisation explicite.
+
+CONFIRMATIONS :
+
+Les actions qui modifient le serveur doivent être préparées.
+L'interface affiche les boutons Valider et Refuser.
+Ne demande jamais de code de confirmation.
+Ne prétends jamais qu'une action est exécutée avant le clic sur Valider et la réponse positive de Falix.
+
+SÉCURITÉ :
 
 Ne révèle jamais les clés API, mots de passe ou secrets.
 Ne prétends jamais avoir accès à des fonctions non disponibles.
@@ -328,7 +344,7 @@ async function falixRequest(endpoint, options = {}) {
         ...(options.body ? { "Content-Type": "application/json" } : {}),
         ...options.headers
       },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(20000)
     }
   );
 
@@ -340,18 +356,25 @@ async function falixRequest(endpoint, options = {}) {
       result.message ||
       `Erreur Falix (${response.status})`;
 
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.actionUrl = result.error?.action_url || null;
+    throw error;
   }
 
   return result.data;
 }
 
-// Lire le statut réel du serveur
-async function getFalixStatus() {
+// Raccourci pour construire les chemins serveur
+function serverEndpoint(pathname) {
   const { serverId } = getFalixConfig();
+  return `/servers/${encodeURIComponent(serverId)}${pathname}`;
+}
 
+// Statut réel
+async function getFalixStatus() {
   const server = await falixRequest(
-    `/servers/${encodeURIComponent(serverId)}/console/status`
+    serverEndpoint("/console/status")
   );
 
   return {
@@ -364,12 +387,10 @@ async function getFalixStatus() {
   };
 }
 
-// Lire les dernières lignes de la console
+// Logs
 async function getFalixLogs() {
-  const { serverId } = getFalixConfig();
-
   const data = await falixRequest(
-    `/servers/${encodeURIComponent(serverId)}/console/log?lines=40`
+    serverEndpoint("/console/log?lines=40")
   );
 
   return {
@@ -379,12 +400,10 @@ async function getFalixLogs() {
   };
 }
 
-// Envoyer une commande à Falix
+// Envoyer une commande Minecraft
 async function sendFalixCommand(command) {
-  const { serverId } = getFalixConfig();
-
   const data = await falixRequest(
-    `/servers/${encodeURIComponent(serverId)}/commands`,
+    serverEndpoint("/commands"),
     {
       method: "POST",
       headers: {
@@ -400,7 +419,122 @@ async function sendFalixCommand(command) {
   };
 }
 
-// Préparer une commande sans l'exécuter
+// Contrôle du serveur
+async function powerFalixServer(signal) {
+  if (!["start", "stop", "restart"].includes(signal)) {
+    throw new Error("Action serveur non autorisée.");
+  }
+
+  const data = await falixRequest(
+    serverEndpoint("/power"),
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID()
+      },
+      body: JSON.stringify({ signal })
+    }
+  );
+
+  return {
+    accepted: true,
+    signal,
+    result: data
+  };
+}
+
+// Explorer un dossier
+async function listFalixFiles(directory = "/") {
+  if (
+    typeof directory !== "string" ||
+    directory.length > 500 ||
+    directory.includes("..")
+  ) {
+    throw new Error("Chemin de dossier invalide.");
+  }
+
+  const params = new URLSearchParams({
+    directory,
+    limit: "100",
+    offset: "0"
+  });
+
+  return await falixRequest(
+    serverEndpoint(`/files?${params}`)
+  );
+}
+
+// Lire un fichier texte
+async function readFalixFile(filePath) {
+  if (
+    typeof filePath !== "string" ||
+    !filePath.startsWith("/") ||
+    filePath.length > 500 ||
+    filePath.includes("..")
+  ) {
+    throw new Error("Chemin de fichier invalide.");
+  }
+
+  const params = new URLSearchParams({
+    path: filePath,
+    length: "65536"
+  });
+
+  return await falixRequest(
+    serverEndpoint(`/files/content?${params}`)
+  );
+}
+
+// Écrire un fichier
+async function writeFalixFile(filePath, content) {
+  if (
+    typeof filePath !== "string" ||
+    !filePath.startsWith("/") ||
+    filePath.length > 500 ||
+    filePath.includes("..")
+  ) {
+    throw new Error("Chemin de fichier invalide.");
+  }
+
+  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 60000) {
+    throw new Error("Le contenu du fichier est invalide ou trop volumineux.");
+  }
+
+  return await falixRequest(
+    serverEndpoint("/files/content"),
+    {
+      method: "PUT",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID()
+      },
+      body: JSON.stringify({
+        path: filePath,
+        content
+      })
+    }
+  );
+}
+
+// Créer une action en attente de confirmation
+function createPendingAction(sessionId, action) {
+  const actionId = crypto.randomBytes(24).toString("base64url");
+
+  const expiresAt = Date.now() + ACTION_DURATION;
+
+  pendingActions.set(actionId, {
+    ...action,
+    sessionId,
+    expiresAt
+  });
+
+  return {
+    actionId,
+    command: action.label,
+    expiresAt
+  };
+}
+
+// Préparer une commande Minecraft
 function prepareCommand(sessionId, command) {
   if (typeof command !== "string") {
     throw new Error("Commande invalide.");
@@ -412,123 +546,173 @@ function prepareCommand(sessionId, command) {
     throw new Error("La commande doit contenir entre 1 et 300 caractères.");
   }
 
-  // Une seule ligne est autorisée
   if (/[\r\n\u0000-\u001f]/.test(cleaned)) {
     throw new Error("Les commandes sur plusieurs lignes sont interdites.");
   }
 
-  // Bloquer les commandes à fort impact
+  // Les actions de contrôle passent par l'API Falix, pas par la console
   const forbidden = ["stop", "restart", "kill", "op", "deop"];
   const firstWord = cleaned.split(/\s+/)[0].toLowerCase();
 
   if (forbidden.includes(firstWord)) {
-    throw new Error("Cette commande est bloquée dans cette première version.");
+    throw new Error("Utilise l'outil de contrôle du serveur pour cette action.");
   }
 
-  // Créer un identifiant secret et unique pour le bouton
-  const actionId = crypto.randomBytes(24).toString("base64url");
-  const expiresAt = Date.now() + COMMAND_CONFIRMATION_DURATION;
-
-  pendingCommands.set(actionId, {
-    sessionId,
+  return createPendingAction(sessionId, {
+    type: "command",
     command: cleaned,
-    expiresAt
+    label: `Commande Minecraft : ${cleaned}`
   });
-
-  return {
-    success: true,
-    confirmationRequired: true,
-    actionId,
-    command: cleaned,
-    expiresAt
-  };
 }
 
-// Valider une commande depuis le bouton de l'interface
+// Préparer start / stop / restart
+function preparePower(sessionId, signal) {
+  if (!["start", "stop", "restart"].includes(signal)) {
+    throw new Error("Action serveur invalide.");
+  }
+
+  const labels = {
+    start: "Démarrer le serveur",
+    stop: "Arrêter le serveur",
+    restart: "Redémarrer le serveur"
+  };
+
+  return createPendingAction(sessionId, {
+    type: "power",
+    signal,
+    label: labels[signal]
+  });
+}
+
+// Préparer une modification de fichier
+function prepareFileWrite(sessionId, filePath, content) {
+  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 60000) {
+    throw new Error("Contenu de fichier invalide ou trop volumineux.");
+  }
+
+  if (
+    typeof filePath !== "string" ||
+    !filePath.startsWith("/") ||
+    filePath.length > 500 ||
+    filePath.includes("..")
+  ) {
+    throw new Error("Chemin de fichier invalide.");
+  }
+
+  return createPendingAction(sessionId, {
+    type: "write_file",
+    filePath,
+    content,
+    label: `Modifier le fichier : ${filePath}`
+  });
+}
+
+// Valider une action
 app.post("/actions/confirm", async (req, res) => {
   const actionId = req.body?.actionId;
 
   if (typeof actionId !== "string" || actionId.length > 100) {
     return res.status(400).json({
       success: false,
-      reply: "La demande de validation est invalide."
+      reply: "Demande de validation invalide."
     });
   }
 
-  const pending = pendingCommands.get(actionId);
+  const pending = pendingActions.get(actionId);
 
   if (!pending || pending.sessionId !== req.sessionId) {
     return res.status(404).json({
       success: false,
-      reply: "Cette commande n'existe plus ou a déjà été traitée."
+      reply: "Cette action n'existe plus ou a déjà été traitée."
     });
   }
 
   if (Date.now() > pending.expiresAt) {
-    pendingCommands.delete(actionId);
+    pendingActions.delete(actionId);
 
     return res.status(410).json({
       success: false,
-      reply: "Le délai de validation est dépassé. Prépare à nouveau ta commande."
+      reply: "Le délai de validation est dépassé. Prépare à nouveau l'action."
     });
   }
 
   // Supprimer l'action avant l'appel pour empêcher les doubles clics
-  pendingCommands.delete(actionId);
+  pendingActions.delete(actionId);
 
   try {
-    const result = await sendFalixCommand(pending.command);
+    let reply = "";
 
-    if (!result.accepted) {
-      return res.status(502).json({
-        success: false,
-        reply: "Falix n'a pas confirmé l'acceptation de la commande. Vérifie la console du serveur."
-      });
+    if (pending.type === "command") {
+      const result = await sendFalixCommand(pending.command);
+
+      if (!result.accepted) {
+        throw new Error("Falix n'a pas confirmé l'acceptation de la commande.");
+      }
+
+      reply = `Commande acceptée par Falix : ${pending.command}`;
+    }
+
+    else if (pending.type === "power") {
+      await powerFalixServer(pending.signal);
+
+      reply = `Falix a accepté la demande : ${pending.signal}. Le changement d'état peut prendre quelques instants.`;
+    }
+
+    else if (pending.type === "write_file") {
+      await writeFalixFile(pending.filePath, pending.content);
+
+      reply = `Le fichier ${pending.filePath} a été envoyé à Falix pour modification.`;
+    }
+
+    else {
+      throw new Error("Type d'action inconnu.");
     }
 
     return res.json({
       success: true,
-      reply: `C'est fait ! La commande \`${pending.command}\` a bien été acceptée par Falix.`
+      reply
     });
-  } catch (error) {
-    console.error("Erreur commande Falix :", error.message);
 
-    return res.status(502).json({
+  } catch (error) {
+    console.error("Erreur action Falix :", error.message);
+
+    return res.status(error.status || 502).json({
       success: false,
-      reply: `Je n'ai pas réussi à envoyer la commande à Falix : ${error.message}`
+      reply: error.message,
+      actionUrl: error.actionUrl || null
     });
   }
 });
 
-// Refuser une commande depuis le bouton de l'interface
+// Refuser une action
 app.post("/actions/cancel", (req, res) => {
   const actionId = req.body?.actionId;
 
   if (typeof actionId !== "string" || actionId.length > 100) {
     return res.status(400).json({
       success: false,
-      reply: "La demande d'annulation est invalide."
+      reply: "Demande d'annulation invalide."
     });
   }
 
-  const pending = pendingCommands.get(actionId);
+  const pending = pendingActions.get(actionId);
 
   if (!pending || pending.sessionId !== req.sessionId) {
     return res.status(404).json({
       success: false,
-      reply: "Cette commande n'existe plus ou a déjà été traitée."
+      reply: "Cette action n'existe plus ou a déjà été traitée."
     });
   }
 
-  pendingCommands.delete(actionId);
+  pendingActions.delete(actionId);
 
   return res.json({
     success: true,
-    reply: "C'est noté ! J'ai annulé la commande. Rien n'a été envoyé à Falix."
+    reply: "Action annulée. Rien n'a été envoyé à Falix."
   });
 });
 
-// Statut général de Demon City IA
+// Statut de Demon City IA
 app.get("/status", (req, res) => {
   res.json({
     success: true,
@@ -537,11 +721,12 @@ app.get("/status", (req, res) => {
     aiConfigured: Boolean(process.env.GROQ_API_KEY),
     falixConfigured: Boolean(
       process.env.FALIX_API_KEY && process.env.FALIX_SERVER_ID
-    )
+    ),
+    webSearchEnabled: true
   });
 });
 
-// Vérifier la connexion Falix
+// Test Falix
 app.get("/falix-test", async (req, res) => {
   try {
     const data = await falixRequest("/me");
@@ -565,38 +750,25 @@ app.get("/falix-test", async (req, res) => {
 app.get("/falix-status", async (req, res) => {
   try {
     const server = await getFalixStatus();
-
     res.json({ success: true, server });
   } catch (error) {
     console.error("Erreur statut Falix :", error.message);
-
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Lecture de la console
+// Console Falix
 app.get("/falix-console", async (req, res) => {
   try {
     const logs = await getFalixLogs();
-
-    res.json({
-      success: true,
-      console: logs
-    });
+    res.json({ success: true, console: logs });
   } catch (error) {
-    console.error("Erreur lecture console :", error.message);
-
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    console.error("Erreur console Falix :", error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Fonctions accessibles à l'IA
+// Fonctions accessibles à Groq
 const availableTools = [
   {
     type: "function",
@@ -628,23 +800,120 @@ const availableTools = [
     type: "function",
     function: {
       name: "prepare_server_command",
-      description: "Préparer une commande Minecraft. Elle ne sera exécutée qu'après le clic de l'utilisateur sur Valider.",
+      description: "Préparer une commande Minecraft à envoyer après validation.",
       parameters: {
         type: "object",
         properties: {
-          command: {
-            type: "string",
-            description: "Commande Minecraft sans slash initial."
-          }
+          command: { type: "string" }
         },
         required: ["command"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "prepare_server_power",
+      description: "Préparer un démarrage, arrêt ou redémarrage du serveur Falix. Demande toujours une confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal: {
+            type: "string",
+            enum: ["start", "stop", "restart"]
+          }
+        },
+        required: ["signal"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_server_files",
+      description: "Lister les fichiers et dossiers d'un répertoire du serveur Falix.",
+      parameters: {
+        type: "object",
+        properties: {
+          directory: { type: "string" }
+        },
+        required: ["directory"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_server_file",
+      description: "Lire le contenu texte d'un fichier du serveur Falix.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" }
+        },
+        required: ["path"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "prepare_file_write",
+      description: "Préparer la création ou modification d'un fichier Falix. L'écriture attendra la confirmation de l'utilisateur.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          content: { type: "string" }
+        },
+        required: ["path", "content"],
         additionalProperties: false
       }
     }
   }
 ];
 
-// Chat principal avec Groq et Falix
+// Appel Groq
+async function callGroq(apiKey, messages, includeTools = true) {
+  const tools = includeTools
+    ? [...availableTools, { type: "browser_search" }]
+    : [{ type: "browser_search" }];
+
+  const response = await fetch(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
+        messages,
+        tools,
+        tool_choice: "auto",
+        temperature: 0.7,
+        max_tokens: 2000
+      }),
+      signal: AbortSignal.timeout(60000)
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    console.error("Erreur Groq :", response.status, result.error);
+    throw new Error("Erreur du moteur Groq.");
+  }
+
+  return result.choices?.[0]?.message;
+}
+
+// Chat principal
 app.post("/chat", async (req, res) => {
   const apiKey = process.env.GROQ_API_KEY;
   const message = req.body?.message;
@@ -676,50 +945,16 @@ app.post("/chat", async (req, res) => {
       { role: "user", content: message.trim() }
     ];
 
-    // Première demande à Groq
-    const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-          messages,
-          tools: availableTools,
-          tool_choice: "auto",
-          temperature: 0.7,
-          max_tokens: 1000
-        }),
-        signal: AbortSignal.timeout(30000)
-      }
-    );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      console.error("Erreur Groq :", response.status, result.error);
-
-      return res.status(502).json({
-        success: false,
-        error: result.error?.message || "Erreur du moteur Groq."
-      });
-    }
-
-    const assistantMessage = result.choices?.[0]?.message;
+    // Première réponse Groq : les outils Web et Falix sont disponibles
+    const assistantMessage = await callGroq(apiKey, messages);
 
     if (!assistantMessage) {
-      return res.status(502).json({
-        success: false,
-        error: "Groq n'a pas renvoyé de réponse."
-      });
+      throw new Error("Groq n'a pas renvoyé de réponse.");
     }
 
     let pendingAction = null;
 
-    // Exécuter uniquement les fonctions prévues
+    // Traiter les fonctions Falix demandées par Groq
     if (assistantMessage.tool_calls?.length) {
       messages.push(assistantMessage);
 
@@ -735,33 +970,78 @@ app.post("/chat", async (req, res) => {
               success: true,
               server: await getFalixStatus()
             });
-          } else if (functionName === "get_console_log") {
+          }
+
+          else if (functionName === "get_console_log") {
             toolResult = JSON.stringify({
               success: true,
               console: await getFalixLogs()
             });
-          } else if (functionName === "prepare_server_command") {
-            // Préparer la commande et transmettre l'action à l'interface
-            const prepared = prepareCommand(req.sessionId, args.command);
+          }
 
-            pendingAction = {
-              actionId: prepared.actionId,
-              command: prepared.command,
-              expiresAt: prepared.expiresAt
-            };
+          else if (functionName === "prepare_server_command") {
+            const prepared = prepareCommand(req.sessionId, args.command);
+            pendingAction = prepared;
 
             toolResult = JSON.stringify({
               success: true,
               confirmationRequired: true,
-              command: prepared.command,
-              message: "La commande est prête. L'utilisateur doit choisir Valider ou Refuser dans l'interface."
+              command: prepared.command
             });
-          } else {
+          }
+
+          else if (functionName === "prepare_server_power") {
+            const prepared = preparePower(req.sessionId, args.signal);
+            pendingAction = prepared;
+
+            toolResult = JSON.stringify({
+              success: true,
+              confirmationRequired: true,
+              action: args.signal
+            });
+          }
+
+          else if (functionName === "list_server_files") {
+            const files = await listFalixFiles(args.directory || "/");
+
+            toolResult = JSON.stringify({
+              success: true,
+              files
+            });
+          }
+
+          else if (functionName === "read_server_file") {
+            const file = await readFalixFile(args.path);
+
+            toolResult = JSON.stringify({
+              success: true,
+              file
+            });
+          }
+
+          else if (functionName === "prepare_file_write") {
+            const prepared = prepareFileWrite(
+              req.sessionId,
+              args.path,
+              args.content
+            );
+
+            pendingAction = prepared;
+
+            toolResult = JSON.stringify({
+              success: true,
+              confirmationRequired: true,
+              path: args.path
+            });
+          }
+
+          else {
             toolResult = JSON.stringify({
               success: false,
               error: "Fonction non autorisée."
             });
           }
+
         } catch (error) {
           toolResult = JSON.stringify({
             success: false,
@@ -776,43 +1056,12 @@ app.post("/chat", async (req, res) => {
         });
       }
 
-      // Faire formuler la réponse finale par Groq
-      const finalResponse = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-            messages,
-            temperature: 0.7,
-            max_tokens: 1000
-          }),
-          signal: AbortSignal.timeout(30000)
-        }
-      );
-
-      const finalResult = await finalResponse.json();
-
-      if (!finalResponse.ok) {
-        console.error("Erreur réponse finale Groq :", finalResult.error);
-
-        return res.status(502).json({
-          success: false,
-          error: "Erreur lors de la réponse finale de Groq."
-        });
-      }
-
-      const finalAnswer = finalResult.choices?.[0]?.message?.content;
+      // Demander à Groq de formuler la réponse finale
+      const finalMessage = await callGroq(apiKey, messages, false);
+      const finalAnswer = finalMessage?.content;
 
       if (!finalAnswer) {
-        return res.status(502).json({
-          success: false,
-          error: "Réponse finale vide."
-        });
+        throw new Error("Réponse finale vide.");
       }
 
       return res.json({
@@ -822,18 +1071,14 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    const answer = assistantMessage.content;
-
-    if (!answer) {
-      return res.status(502).json({
-        success: false,
-        error: "Groq n'a pas renvoyé de réponse."
-      });
+    // Réponse normale ou réponse issue de browser_search
+    if (!assistantMessage.content) {
+      throw new Error("Groq n'a pas renvoyé de réponse.");
     }
 
     return res.json({
       success: true,
-      reply: answer,
+      reply: assistantMessage.content,
       pendingAction: null
     });
 
@@ -842,7 +1087,7 @@ app.post("/chat", async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: "Impossible de contacter le moteur IA."
+      error: "Impossible de contacter le moteur IA. Réessaie dans un instant."
     });
   }
 });
@@ -855,5 +1100,5 @@ app.listen(PORT, "0.0.0.0", () => {
     sessionSecretLength: process.env.SESSION_SECRET?.length || 0
   });
 
-  console.log(`Demon City IA démarré sur le port ${PORT}`);
+  console.log("Demon City IA démarré sur le port", PORT);
 });
